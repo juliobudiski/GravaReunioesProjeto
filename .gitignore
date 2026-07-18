@@ -1,0 +1,18 @@
+# Ambientes Python
+backend/venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Configurações e Segredos
+backend/.env
+
+# Arquivos Temporários de Áudio (Segurança/LGPD)
+backend/app/temp_audio/*
+!backend/app/temp_audio/.keep
+
+# Frontend e Node
+node_modules/
+frontend/dist/
+frontend/node_modules/
+.DS_Store

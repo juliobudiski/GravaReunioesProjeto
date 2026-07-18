@@ -1,0 +1,8 @@
+@import "tailwindcss";
+
+/* Fundo escuro padrão do aplicativo */
+body {
+  background-color: #f3f4f6; /* Gray 100 */
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
