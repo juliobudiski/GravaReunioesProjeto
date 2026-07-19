@@ -1,19 +1,191 @@
-import React from 'react'
-import AudioRecorder from './components/AudioRecorder'
+import React, { useState, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
+import { Mic, Settings as SettingsIcon, History, ChevronRight, Loader2, Trash2 } from 'lucide-react';
+import { Toaster, toast } from 'react-hot-toast'; // Notificações flutuantes!
+import AudioRecorder from './components/AudioRecorder';
+import Settings from './components/Settings';
+import MeetingView from './components/MeetingView';
+import { getMeetings, deleteMeeting } from './api';
 
-function App() {
+// A TELA DE HISTÓRICO COM ATUALIZAÇÃO EM TEMPO REAL (POLLING)
+function HistoryScreen() {
+  const [meetings, setMeetings] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
+
+  const loadData = async () => {
+    try {
+      const data = await getMeetings();
+      setMeetings(data);
+    } catch (error) {
+      console.error("Erro ao carregar histórico", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+    const handleTrash = async (e, id) => {
+    e.stopPropagation(); // Evita que o clique na lixeira abra a página da Ata
+    if(window.confirm("Apagar esta ata permanentemente?")) {
+      try {
+        await deleteMeeting(id);
+        toast.success("Ata apagada!");
+        loadData(); // Recarrega a lista
+      } catch (err) {
+        toast.error("Erro ao apagar");
+      }
+    }
+  };
+
+  useEffect(() => {
+    // Carrega a primeira vez imediatamente
+    loadData();
+
+    // Configura o Polling: Pergunta ao servidor a cada 3 segundos
+    const interval = setInterval(() => {
+      loadData();
+    }, 3000);
+
+    // QA: Limpa o intervalo se o usuário mudar de tela para não travar o celular
+    return () => clearInterval(interval);
+  }, []);
+
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-gray-100 p-4">
-      <div className="mb-8 text-center">
-        <h1 className="text-3xl font-extrabold text-gray-800 tracking-tight mb-2">
-          Ata Inteligente <span className="text-blue-600">PWA</span>
-        </h1>
-        <p className="text-gray-500">Grave sua reunião com segurança</p>
-      </div>
+    <div className="p-4 pt-8 pb-24 max-w-md mx-auto h-full">
+      <h2 className="text-3xl font-extrabold text-gray-800 mb-6">Minhas Atas</h2>
+      
+      {loading && meetings.length === 0 ? (
+        <p className="text-center text-gray-500 mt-10 flex items-center justify-center gap-2">
+          <Loader2 className="animate-spin" size={20} /> Carregando...
+        </p>
+      ) : meetings.length === 0 ? (
+        <div className="flex flex-col items-center justify-center mt-20 opacity-50">
+          <History className="w-16 h-16 text-gray-400 mb-4" />
+          <p className="text-gray-500">Nenhuma reunião gravada ainda.</p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-4">
+          {meetings.map((m) => (
+            <div 
+              key={m.id} 
+              onClick={() => m.status === 'completed' ? navigate(`/meeting/${m.id}`) : null}
+              className={`p-4 rounded-2xl shadow-sm border transition-all ${
+                m.status === 'processing' 
+                  ? 'bg-blue-50 border-blue-200 cursor-default' 
+                  : m.status === 'error'
+                  ? 'bg-red-50 border-red-200 cursor-not-allowed'
+                  : 'bg-white border-gray-100 cursor-pointer hover:shadow-md active:scale-[0.98]'
+              }`}
+            >
+              <div className="flex justify-between items-center mb-2">
+                <div className="overflow-hidden pr-4 w-full">
+                  <h3 className="font-bold text-gray-800 text-lg truncate">
+                    {m.status === 'processing' ? 'Processando Áudio...' : m.title || "Sem Título"}
+                  </h3>
+                  
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-xs text-gray-400 font-medium">
+                      {new Date(m.created_at).toLocaleDateString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                    
+                    {m.status === 'processing' && (
+                      <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-bold uppercase flex items-center gap-1">
+                        <Loader2 className="w-3 h-3 animate-spin" /> {m.progress}%
+                      </span>
+                    )}
+                    {m.status === 'error' && (
+                      <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-bold uppercase">Falhou</span>
+                    )}
+                  </div>
+                </div>
+                  <div className="flex gap-2">
+                      <button onClick={(e) => handleTrash(e, m.id)} className="text-red-400 hover:text-red-600 p-2"><Trash2 size={20}/></button>
+                      {m.status === 'completed' && <ChevronRight className="text-gray-300 w-6 h-6 flex-shrink-0 mt-2" />}
+                  </div>
+              </div>
 
-      <AudioRecorder />
+              {/* BARRA DE PROGRESSO E LOGS (Visível apenas se não estiver completada) */}
+              {m.status !== 'completed' && (
+                <div className="mt-4 border-t border-blue-100 pt-3">
+                  
+                  {/* Progress Bar */}
+                  <div className="w-full bg-blue-200/50 rounded-full h-1.5 mb-3 overflow-hidden">
+                    <div 
+                      className={`h-1.5 rounded-full transition-all duration-500 ease-out ${m.status === 'error' ? 'bg-red-500' : 'bg-blue-600'}`} 
+                      style={{ width: `${m.progress}%` }}
+                    ></div>
+                  </div>
+
+                  {/* Terminal de Logs (Accordion Nativo) */}
+                  <details className="text-sm group">
+                    <summary className="text-blue-600 cursor-pointer font-medium hover:text-blue-800 flex items-center outline-none list-none">
+                      <span className="group-open:hidden">▶ Ver logs do sistema</span>
+                      <span className="hidden group-open:inline">▼ Ocultar logs</span>
+                    </summary>
+                    <div className="mt-2 bg-gray-900 text-green-400 p-3 rounded-lg text-[11px] font-mono h-32 overflow-y-auto shadow-inner flex flex-col gap-1">
+                      {m.step_logs && m.step_logs.length > 0 ? (
+                        m.step_logs.map((log, idx) => (
+                          <div key={idx} className="border-b border-gray-800 pb-1">
+                            <span className="text-gray-500">[{new Date().toLocaleTimeString()}]</span> {log}
+                          </div>
+                        ))
+                      ) : (
+                        <div className="text-gray-500 animate-pulse">Aguardando servidor...</div>
+                      )}
+                    </div>
+                  </details>
+                  
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
-  )
+  );
 }
 
-export default App
+// O Menu Inferior (Bottom Navigation)
+function BottomNav() {
+  const location = useLocation();
+  if (location.pathname.startsWith('/meeting/')) return null;
+  const isActive = (path) => location.pathname === path ? "text-blue-600" : "text-gray-400 hover:text-gray-600";
+
+  return (
+    <div className="fixed bottom-0 w-full bg-white border-t border-gray-200 pb-safe shadow-[0_-5px_20px_rgba(0,0,0,0.05)] z-40">
+      <div className="flex justify-around items-center h-16 max-w-md mx-auto">
+        <Link to="/history" className={`flex flex-col items-center gap-1 w-20 transition-colors ${isActive('/history')}`}>
+          <History size={24} />
+          <span className="text-[10px] font-semibold tracking-wide">Histórico</span>
+        </Link>
+        <Link to="/" className="relative -top-5 flex flex-col items-center justify-center w-16 h-16 rounded-full bg-blue-600 shadow-lg text-white hover:bg-blue-700 transition-transform active:scale-95">
+          <Mic size={28} />
+        </Link>
+        <Link to="/settings" className={`flex flex-col items-center gap-1 w-20 transition-colors ${isActive('/settings')}`}>
+          <SettingsIcon size={24} />
+          <span className="text-[10px] font-semibold tracking-wide">Ajustes</span>
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      {/* O Toaster é o gerenciador de notificações no topo da tela */}
+      <Toaster position="top-center" reverseOrder={false} />
+      
+      <div className="min-h-screen bg-gray-50 text-gray-900 font-sans selection:bg-blue-200">
+        <div className="h-full">
+          <Routes>
+            <Route path="/" element={<div className="pt-10 flex flex-col items-center justify-center min-h-[80vh]"><AudioRecorder /></div>} />
+            <Route path="/settings" element={<Settings />} />
+            <Route path="/history" element={<HistoryScreen />} />
+            <Route path="/meeting/:id" element={<MeetingView />} />
+          </Routes>
+        </div>
+        <BottomNav />
+      </div>
+    </BrowserRouter>
+  );
+}

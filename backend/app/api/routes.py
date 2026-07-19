@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
 from backend.app.core.database import SessionLocal
 from backend.app.models.models import Settings, APIKey
-
+import json
 # Cria um agrupamento de rotas chamado "api"
 api_bp = Blueprint("api", __name__)
 
@@ -119,19 +119,72 @@ def upload_meeting():
 
 @api_bp.route("/meetings", methods=["GET"])
 def get_all_meetings():
-    """Lista o histórico de reuniões para a tela inicial."""
     db = SessionLocal()
     try:
-        # Ordena da mais recente para a mais antiga
         meetings = db.query(Meeting).order_by(Meeting.created_at.desc()).all()
         result = []
         for m in meetings:
+            # Transforma a string do banco de volta numa lista para o Frontend
+            logs_array = []
+            if m.step_logs:
+                try:
+                    logs_array = json.loads(m.step_logs)
+                except:
+                    logs_array = []
+
             result.append({
                 "id": m.id,
                 "title": m.title,
                 "status": m.status,
-                "created_at": m.created_at.isoformat()
+                "created_at": m.created_at.isoformat(),
+                "summary": m.summary,
+                "full_transcript": m.full_transcript,
+                "progress": m.progress,      # NOVO
+                "step_logs": logs_array      # NOVO
             })
         return jsonify(result), 200
     finally:
         db.close()
+        
+        
+@api_bp.route("/meetings/<meeting_id>", methods=["PUT"])
+def update_meeting(meeting_id):
+    """US05: Atualiza o texto editado pelo usuário."""
+    db = SessionLocal()
+    try:
+        data = request.json
+        meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+        
+        if not meeting:
+            return jsonify({"error": "Reunião não encontrada"}), 404
+            
+        if "summary" in data:
+            meeting.summary = data["summary"]
+        if "full_transcript" in data:
+            meeting.full_transcript = data["full_transcript"]
+            
+        db.commit()
+        return jsonify({"message": "Ata atualizada com sucesso"}), 200
+    except Exception as e:
+        db.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        db.close()        
+        
+@api_bp.route("/meetings/<meeting_id>", methods=["DELETE"])
+def delete_meeting(meeting_id):
+    """US21: Exclusão do Histórico."""
+    db = SessionLocal()
+    try:
+        meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+        if not meeting:
+            return jsonify({"error": "Ata não encontrada"}), 404
+            
+        db.delete(meeting)
+        db.commit()
+        return jsonify({"message": "Ata excluída com sucesso"}), 200
+    except Exception as e:
+        db.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        db.close()        

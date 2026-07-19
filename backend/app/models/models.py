@@ -26,14 +26,16 @@ class APIKey(Base):
 
 class Meeting(Base):
     __tablename__ = "meetings"
-    
-    # Usa UUID para segurança (não previsível)
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
-    title = Column(String, nullable=True) # US08
+    title = Column(String, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    status = Column(String, default="processing") # processing, completed, error
+    status = Column(String, default="processing")
     template_used = Column(String, default="padrao")
     
     full_transcript = Column(Text, nullable=True)
     summary = Column(Text, nullable=True)
     tasks = Column(Text, nullable=True)
+    
+    # NOVAS COLUNAS (Progresso e Logs em tempo real)
+    progress = Column(Integer, default=0)
+    step_logs = Column(Text, default="[]")
