@@ -71,108 +71,109 @@ function HistoryScreen() {
   }, []);
 
   return (
-    <div className="p-4 pt-8 pb-24 max-w-md mx-auto h-full">
-      <h2 className="text-3xl font-extrabold text-gray-800 mb-6">Minhas Atas</h2>
+    <div className="p-4 pt-8 pb-24 max-w-md mx-auto h-full transition-colors" style={{ color: 'var(--text-primary)' }}>
+      <h2 className="text-3xl font-extrabold mb-6">Minhas Atas</h2>
       
       {loading && meetings.length === 0 ? (
-        <p className="text-center text-gray-500 mt-10 flex items-center justify-center gap-2">
+        <p className="text-center mt-10 flex items-center justify-center gap-2" style={{ color: 'var(--text-secondary)' }}>
           <Loader2 className="animate-spin" size={20} /> Carregando...
         </p>
-      ) : meetings.length === 0 ? (
+      ) : meetings.length === 0 && offlineMeetings.length === 0 ? (
         <div className="flex flex-col items-center justify-center mt-20 opacity-50">
-          <History className="w-16 h-16 text-gray-400 mb-4" />
-          <p className="text-gray-500">Nenhuma reunião gravada ainda.</p>
+          <History className="w-16 h-16 mb-4" style={{ color: 'var(--text-secondary)' }} />
+          <p style={{ color: 'var(--text-secondary)' }}>Nenhuma reunião gravada ainda.</p>
         </div>
       ) : (
         <div className="flex flex-col gap-4">
-                    {/* MÓDULO OFFLINE (Os arquivos presos) */}
+          
+          {/* MÓDULO OFFLINE (Os arquivos presos) */}
           {offlineMeetings.map((m) => (
-            <div key={m.id} className="p-4 rounded-2xl shadow-sm border-2 border-orange-200 bg-orange-50 cursor-default">
+            <div key={m.id} className="p-4 rounded-2xl shadow-sm border-2 cursor-default transition-colors glass-effect"
+                 style={{ backgroundColor: 'var(--bg-card)', borderColor: '#f97316', color: 'var(--text-primary)' }}>
               <div className="flex justify-between items-center mb-2">
                 <div className="overflow-hidden pr-4 w-full">
-                  <h3 className="font-bold text-gray-800 text-lg">Pendente: {m.title}</h3>
+                  <h3 className="font-bold text-lg truncate">Pendente: {m.title}</h3>
                   <div className="flex items-center gap-2 mt-1">
-                    <span className="text-xs text-orange-600 font-bold uppercase border border-orange-400 px-2 rounded-full">
-                      Salvo Apenas no Celular
+                    <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full" style={{ backgroundColor: '#f9731633', color: '#ea580c' }}>
+                      Salvo Localmente
                     </span>
                   </div>
                 </div>
               </div>
               <div className="mt-3 flex gap-2">
-                <button onClick={(e) => handleSync(e, m.id)} className="flex-1 flex items-center justify-center gap-2 bg-orange-500 hover:bg-orange-600 text-white font-bold py-2 rounded-lg transition-transform active:scale-95">
+                <button onClick={(e) => handleSync(e, m.id)} className="flex-1 flex items-center justify-center gap-2 text-white font-bold py-2 rounded-lg transition-transform active:scale-95 border-none" style={{ backgroundColor: '#f97316' }}>
                   <UploadCloud size={18} /> Enviar Agora
                 </button>
-                <button onClick={async (e) => { e.stopPropagation(); await deleteOfflineMeeting(m.id); loadData(); }} className="p-2 bg-red-100 text-red-600 rounded-lg hover:bg-red-200">
+                <button onClick={async (e) => { e.stopPropagation(); await deleteOfflineMeeting(m.id); loadData(); }} className="p-2 rounded-lg transition-colors" style={{ backgroundColor: '#ef444422', color: '#ef4444' }}>
                   <Trash2 size={20} />
                 </button>
               </div>
             </div>
           ))}
+
+          {/* AS REUNIÕES NORMAIS DO FLASK */}
           {meetings.map((m) => (
             <div 
               key={m.id} 
               onClick={() => m.status === 'completed' ? navigate(`/meeting/${m.id}`) : null}
-              // O className cuida dos preenchimentos (p-4), bordas, sombras e cursor
-              className={`p-4 rounded-2xl shadow-sm border transition-all ${
-                m.status === 'processing' 
-                  ? 'cursor-default' 
-                  : m.status === 'error'
-                  ? 'cursor-not-allowed'
-                  : 'cursor-pointer hover:shadow-md active:scale-[0.98]'
+              className={`p-4 rounded-2xl shadow-sm border transition-all glass-effect ${
+                m.status === 'processing' ? 'cursor-default' : 
+                m.status === 'error' ? 'cursor-not-allowed' : 
+                'cursor-pointer hover:shadow-md active:scale-[0.98]'
               }`}
-              // O style cuida exclusivamente das cores (lendo o tema ou forçando vermelho/azul)
+              // A CORREÇÃO DE CORE AQUI: Fundo sempre do tema, borda muda por status!
               style={{
-                backgroundColor: m.status === 'processing' ? '#eff6ff' : (m.status === 'error' ? '#fef2f2' : 'var(--bg-card)'),
-                borderColor: m.status === 'processing' ? '#bfdbfe' : (m.status === 'error' ? '#fecaca' : 'var(--border)'),
+                backgroundColor: 'var(--bg-card)',
+                borderColor: m.status === 'processing' ? 'var(--accent)' : (m.status === 'error' ? '#ef4444' : 'var(--border)'),
                 color: 'var(--text-primary)'
               }}
             >
               <div className="flex justify-between items-center mb-2">
                 <div className="overflow-hidden pr-4 w-full">
-                  <h3 className="font-bold text-gray-800 text-lg truncate">
+                  <h3 className="font-bold text-lg truncate">
                     {m.status === 'processing' ? 'Processando Áudio...' : m.title || "Sem Título"}
                   </h3>
                   
                   <div className="flex items-center gap-2 mt-1">
-                    <span className="text-xs text-gray-400 font-medium">
+                    <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
                       {new Date(m.created_at).toLocaleDateString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                     </span>
                     
+                    {/* Badge de Status Coerente */}
                     {m.status === 'processing' && (
-                      <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-bold uppercase flex items-center gap-1">
-                        <Loader2 className="w-3 h-3 animate-spin" /> {m.progress}%
+                      <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase flex items-center gap-1" style={{ backgroundColor: 'var(--accent)', color: '#fff' }}>
+                        <Loader2 className="w-3 h-3 animate-spin" /> Em andamento
                       </span>
                     )}
                     {m.status === 'error' && (
-                      <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-bold uppercase">Falhou</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase" style={{ backgroundColor: '#ef444422', color: '#ef4444' }}>Falhou</span>
                     )}
                   </div>
                 </div>
-                  <div className="flex gap-2">
-                      <button onClick={(e) => handleTrash(e, m.id)} className="text-red-400 hover:text-red-600 p-2"><Trash2 size={20}/></button>
-                      {m.status === 'completed' && <ChevronRight className="text-gray-300 w-6 h-6 flex-shrink-0 mt-2" />}
-                  </div>
+                
+                {/* Lixeira e Seta Coerentes com o Tema */}
+                <div className="flex gap-2 items-center">
+                  <button onClick={(e) => handleTrash(e, m.id)} className="p-2 transition-colors z-10" style={{ color: '#ef4444' }}>
+                    <Trash2 size={18}/>
+                  </button>
+                  {m.status === 'completed' && <ChevronRight className="w-6 h-6 flex-shrink-0" style={{ color: 'var(--text-secondary)' }} />}
+                </div>
               </div>
 
-              {/* BARRA DE PROGRESSO E LOGS (Visível apenas se não estiver completada) */}
-              {m.status !== 'completed' && (
-                <div className="mt-4 border-t border-blue-100 pt-3">
-                  
-                  {/* Progress Bar */}
-                  <div className="w-full bg-blue-200/50 rounded-full h-1.5 mb-3 overflow-hidden">
-                    <div 
-                      className={`h-1.5 rounded-full transition-all duration-500 ease-out ${m.status === 'error' ? 'bg-red-500' : 'bg-blue-600'}`} 
-                      style={{ width: `${m.progress}%` }}
-                    ></div>
+              {/* BARRA DE PROGRESSO E LOGS (Só mostra se não completou e não deu erro) */}
+              {m.status === 'processing' && (
+                <div className="mt-4 border-t pt-3" style={{ borderColor: 'var(--border)' }}>
+                  <div className="w-full rounded-full h-1.5 mb-3 overflow-hidden" style={{ backgroundColor: 'var(--border)' }}>
+                    <div className="h-1.5 rounded-full transition-all duration-500 ease-out" style={{ width: `${m.progress}%`, backgroundColor: 'var(--accent)' }}></div>
                   </div>
 
-                  {/* Terminal de Logs (Accordion Nativo) */}
                   <details className="text-sm group">
-                    <summary className="text-blue-600 cursor-pointer font-medium hover:text-blue-800 flex items-center outline-none list-none">
+                    <summary className="cursor-pointer font-medium flex items-center outline-none list-none" style={{ color: 'var(--accent)' }}>
                       <span className="group-open:hidden">▶ Ver logs do sistema</span>
                       <span className="hidden group-open:inline">▼ Ocultar logs</span>
                     </summary>
-                    <div className="mt-2 bg-gray-900 text-green-400 p-3 rounded-lg text-[11px] font-mono h-32 overflow-y-auto shadow-inner flex flex-col gap-1">
+                    {/* Terminalzinho interno (sempre dark style) */}
+                    <div className="mt-2 bg-[#0f172a] text-green-400 p-3 rounded-lg text-[11px] font-mono h-32 overflow-y-auto shadow-inner flex flex-col gap-1">
                       {m.step_logs && m.step_logs.length > 0 ? (
                         m.step_logs.map((log, idx) => (
                           <div key={idx} className="border-b border-gray-800 pb-1">
@@ -184,7 +185,6 @@ function HistoryScreen() {
                       )}
                     </div>
                   </details>
-                  
                 </div>
               )}
             </div>
