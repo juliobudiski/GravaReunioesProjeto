@@ -15,3 +15,9 @@ class ILLMAdapter(ABC):
     def generate_summary(self, text: str, template: str) -> dict:
         """Recebe a transcrição e devolve um dicionário com Resumo e Tarefas."""
         pass
+    
+    @abstractmethod
+    def chat(self, context: str, question: str) -> str:
+        """Recebe o texto da reunião e uma pergunta, e devolve a resposta da IA."""
+        pass    
+        

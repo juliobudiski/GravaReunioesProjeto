@@ -2,6 +2,8 @@ from flask import Blueprint, request, jsonify
 from backend.app.core.database import SessionLocal
 from backend.app.models.models import Settings, APIKey
 import json
+import openai
+
 # Cria um agrupamento de rotas chamado "api"
 api_bp = Blueprint("api", __name__)
 
@@ -17,7 +19,13 @@ def get_settings():
             return jsonify({"chunk_duration_minutes": 2, "keys": []}), 200
         
         # Monta a lista de chaves
-        keys = [{"provider": k.provider, "key": k.api_key, "priority": k.priority} for k in settings.api_keys]
+        keys = [{
+            "provider": k.provider, 
+            "key": k.api_key, 
+            "priority": k.priority,
+            "primary_model": k.primary_model,
+            "cascade_list": json.loads(k.cascade_list) if k.cascade_list else []
+        } for k in settings.api_keys]
         
         return jsonify({
             "chunk_duration_minutes": settings.chunk_duration_minutes,
@@ -53,7 +61,9 @@ def update_settings():
                     settings_id=1,
                     provider=k.get("provider"),
                     api_key=str(k.get("key")).strip(),
-                    priority=k.get("priority", 1)
+                    priority=k.get("priority", 1),
+                    primary_model=k.get("primary_model"),
+                    cascade_list=json.dumps(k.get("cascade_list", []))
                 )
                 db.add(new_key)
         
@@ -185,6 +195,68 @@ def delete_meeting(meeting_id):
         return jsonify({"message": "Ata excluída com sucesso"}), 200
     except Exception as e:
         db.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        db.close()        
+        
+        
+import google.generativeai as genai
+from backend.app.models.models import APIKey
+
+@api_bp.route("/models", methods=["GET"])
+def get_available_models():
+    """US25: Lista os modelos disponíveis baseado no provedor."""
+    provider = request.args.get("provider", "gemini")
+    db = SessionLocal()
+    
+    try:
+        key_record = db.query(APIKey).filter(APIKey.settings_id == 1, APIKey.provider == provider).first()
+        if not key_record or not key_record.api_key:
+            return jsonify({"error": f"Nenhuma chave cadastrada para {provider}"}), 404
+            
+        models_list = []
+        
+        if provider == "gemini":
+            genai.configure(api_key=key_record.api_key)
+            for m in genai.list_models():
+                if 'generateContent' in m.supported_generation_methods:
+                    models_list.append(m.name.replace("models/", ""))
+                    
+        elif provider == "openai":
+            # A correção da OpenAI!
+            client = openai.OpenAI(api_key=key_record.api_key)
+            response = client.models.list()
+            # Filtra apenas modelos inteligentes (exclui TTS, Whisper, DALL-E)
+            for m in response.data:
+                if m.id.startswith("gpt") or m.id.startswith("o1") or m.id.startswith("o3"):
+                    models_list.append(m.id)
+            models_list.sort(reverse=True) # Organiza para mostrar os mais novos (gpt-4) em cima
+            
+        return jsonify({"models": models_list}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        db.close()
+        
+        
+@api_bp.route("/meetings/<meeting_id>/chat", methods=["POST"])
+def chat_meeting(meeting_id):
+    """US19: Chat Contextual (Q&A)"""
+    db = SessionLocal()
+    # Importação local para evitar dependência circular (caso não esteja no topo)
+    from backend.app.services.llm_orchestrator import LLMOrchestrator
+    orchestrator = LLMOrchestrator()
+    try:
+        data = request.json
+        question = data.get("question")
+        
+        meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+        if not meeting or not meeting.full_transcript:
+            return jsonify({"error": "Transcrição não encontrada para esta ata"}), 404
+            
+        answer = orchestrator.chat_with_meeting(meeting.full_transcript, question)
+        return jsonify({"answer": answer}), 200
+    except Exception as e:
         return jsonify({"error": str(e)}), 500
     finally:
         db.close()        

@@ -3,6 +3,7 @@ from backend.app.core.database import SessionLocal
 from backend.app.models.models import APIKey, Settings
 from backend.app.adapters.openai_adapter import OpenAIAdapter
 from backend.app.adapters.gemini_adapter import GeminiAdapter
+import json
 
 # Configura o sistema de logs para o terminal do Ubuntu
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -21,10 +22,19 @@ class LLMOrchestrator:
             keys = db.query(APIKey).filter(APIKey.settings_id == 1).order_by(APIKey.priority.asc()).all()
             
             for k in keys:
+                # O parse do JSON extrai a lista do banco
+                cascade = json.loads(k.cascade_list) if k.cascade_list else []
+                
                 if k.provider == 'openai':
-                    adapters_list.append({'name': f"OpenAI (Priority {k.priority})", 'instance': OpenAIAdapter(k.api_key)})
+                    adapters_list.append({
+                        'name': f"OpenAI (Priority {k.priority})", 
+                        'instance': OpenAIAdapter(k.api_key, k.primary_model, cascade) # CORRIGIDO AQUI
+                    })
                 elif k.provider == 'gemini':
-                    adapters_list.append({'name': f"Gemini (Priority {k.priority})", 'instance': GeminiAdapter(k.api_key)})
+                    adapters_list.append({
+                        'name': f"Gemini (Priority {k.priority})", 
+                        'instance': GeminiAdapter(k.api_key, k.primary_model, cascade)
+                    })
             
             return adapters_list
         except Exception as e:
@@ -76,3 +86,15 @@ class LLMOrchestrator:
                 logger.warning(f"⚠️ Falha no {name}. Erro: {e}. Tentando o próximo...")
 
         raise RuntimeError("Falha total no Resumo: Todas as APIs esgotadas ou com erro.")
+        
+    def chat_with_meeting(self, context: str, question: str) -> str:
+        if not self.adapters:
+            raise ValueError("Nenhuma chave de API configurada no banco de dados!")
+        for adapter_info in self.adapters:
+            try:
+                logger.info(f"⏳ Perguntando ao chat via: {adapter_info['name']}")
+                return adapter_info['instance'].chat(context, question)
+            except Exception as e:
+                logger.warning(f"⚠️ Falha no chat via {adapter_info['name']}: {e}")
+        raise RuntimeError("Falha total no Chat. Todas as APIs esgotadas.")    
+        

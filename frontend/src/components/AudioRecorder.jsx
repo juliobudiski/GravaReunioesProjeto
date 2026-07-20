@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Mic, Square, Lock, Unlock, Upload, FileAudio } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
-import { uploadAudio } from '../api';
+import { uploadAudio, saveOfflineMeeting } from '../api';
 
 export default function AudioRecorder() {
   const navigate = useNavigate();
@@ -49,13 +49,27 @@ export default function AudioRecorder() {
 
       mediaRecorderRef.current.onstop = async () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        setStatusMsg("⏳ Enviando gravação para a IA...");
-        try {
-          await uploadAudio(audioBlob, template);
-          setStatusMsg("✅ Reunião enviada para processamento!");
-          setTimeout(() => {navigate('/history');}, 2000);
-        } catch (error) {
-          setStatusMsg("❌ Erro ao enviar. Backend desligado?");
+        
+        // Verifica se tem internet no momento da parada
+        if (navigator.onLine) {
+          setStatusMsg("⏳ Enviando gravação para a IA...");
+          const toastId = toast.loading("Fazendo upload...");
+          try {
+            await uploadAudio(audioBlob, template);
+            toast.success("Enviado com sucesso!", { id: toastId });
+            navigate('/history');
+          } catch (error) {
+            // Se o servidor caiu bem na hora (Timeout 500)
+            toast.error("Servidor indisponível. Salvando no celular...", { id: toastId });
+            await saveOfflineMeeting(audioBlob, template);
+            navigate('/history');
+          }
+        } else {
+          // Se o usuário está na rua / sem internet (O Cientista no campo)
+          setStatusMsg("📡 Modo Offline: Salvando localmente...");
+          await saveOfflineMeeting(audioBlob, template);
+          toast.success("Áudio salvo em segurança no celular!");
+          navigate('/history');
         }
       };
 
@@ -152,7 +166,7 @@ export default function AudioRecorder() {
 
   // --- RENDER DA TELA NORMAL ---
   return (
-    <div className="flex flex-col items-center justify-center p-8 bg-white rounded-3xl shadow-xl w-full max-w-sm border border-gray-100 relative">
+    <div className="flex flex-col items-center justify-center p-8 rounded-3xl shadow-xl w-full max-w-sm border relative transition-colors" style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}>
       
       {/* Dropdown de Foco da IA (US03) */}
       <div className="w-full mb-6">

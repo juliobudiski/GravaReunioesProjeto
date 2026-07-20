@@ -18,9 +18,13 @@ class APIKey(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     settings_id = Column(Integer, ForeignKey("settings.id"))
-    provider = Column(String, index=True) # Ex: 'openai' ou 'gemini'
+    provider = Column(String, index=True)
     api_key = Column(String)
-    priority = Column(Integer, default=1) # Ordem de Fallback
+    priority = Column(Integer, default=1)
+    
+    # NOVAS COLUNAS
+    primary_model = Column(String, nullable=True)
+    cascade_list = Column(Text, default="[]")
     
     settings = relationship("Settings", back_populates="api_keys")
 

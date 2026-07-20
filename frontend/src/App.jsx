@@ -1,15 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
-import { Mic, Settings as SettingsIcon, History, ChevronRight, Loader2, Trash2 } from 'lucide-react';
+import { Mic, Settings as SettingsIcon, History, ChevronRight, Loader2, Trash2, UploadCloud } from 'lucide-react';
 import { Toaster, toast } from 'react-hot-toast'; // Notificações flutuantes!
 import AudioRecorder from './components/AudioRecorder';
 import Settings from './components/Settings';
 import MeetingView from './components/MeetingView';
-import { getMeetings, deleteMeeting } from './api';
+import { getMeetings, deleteMeeting, getOfflineMeetings, syncOfflineMeeting, deleteOfflineMeeting } from './api';
 
 // A TELA DE HISTÓRICO COM ATUALIZAÇÃO EM TEMPO REAL (POLLING)
 function HistoryScreen() {
   const [meetings, setMeetings] = useState([]);
+  const [offlineMeetings, setOfflineMeetings] = useState([]); // NOVO ESTADO
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
@@ -17,8 +18,12 @@ function HistoryScreen() {
     try {
       const data = await getMeetings();
       setMeetings(data);
+      
+      // Carrega os arquivos presos no celular
+      const localData = await getOfflineMeetings();
+      setOfflineMeetings(localData);
     } catch (error) {
-      console.error("Erro ao carregar histórico", error);
+      console.error("Erro", error);
     } finally {
       setLoading(false);
     }
@@ -33,6 +38,22 @@ function HistoryScreen() {
       } catch (err) {
         toast.error("Erro ao apagar");
       }
+    }
+  };
+  const handleSync = async (e, localId) => {
+    e.stopPropagation();
+    if (!navigator.onLine) {
+      toast.error("Você precisa estar conectado à internet!");
+      return;
+    }
+    
+    const toastId = toast.loading("Enviando áudio gigante para a nuvem...");
+    try {
+      await syncOfflineMeeting(localId);
+      toast.success("Sincronizado com sucesso! IA trabalhando...", { id: toastId });
+      loadData(); // Atualiza a tela
+    } catch (error) {
+      toast.error("Falha ao sincronizar.", { id: toastId });
     }
   };
 
@@ -64,17 +85,47 @@ function HistoryScreen() {
         </div>
       ) : (
         <div className="flex flex-col gap-4">
+                    {/* MÓDULO OFFLINE (Os arquivos presos) */}
+          {offlineMeetings.map((m) => (
+            <div key={m.id} className="p-4 rounded-2xl shadow-sm border-2 border-orange-200 bg-orange-50 cursor-default">
+              <div className="flex justify-between items-center mb-2">
+                <div className="overflow-hidden pr-4 w-full">
+                  <h3 className="font-bold text-gray-800 text-lg">Pendente: {m.title}</h3>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-xs text-orange-600 font-bold uppercase border border-orange-400 px-2 rounded-full">
+                      Salvo Apenas no Celular
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div className="mt-3 flex gap-2">
+                <button onClick={(e) => handleSync(e, m.id)} className="flex-1 flex items-center justify-center gap-2 bg-orange-500 hover:bg-orange-600 text-white font-bold py-2 rounded-lg transition-transform active:scale-95">
+                  <UploadCloud size={18} /> Enviar Agora
+                </button>
+                <button onClick={async (e) => { e.stopPropagation(); await deleteOfflineMeeting(m.id); loadData(); }} className="p-2 bg-red-100 text-red-600 rounded-lg hover:bg-red-200">
+                  <Trash2 size={20} />
+                </button>
+              </div>
+            </div>
+          ))}
           {meetings.map((m) => (
             <div 
               key={m.id} 
               onClick={() => m.status === 'completed' ? navigate(`/meeting/${m.id}`) : null}
+              // O className cuida dos preenchimentos (p-4), bordas, sombras e cursor
               className={`p-4 rounded-2xl shadow-sm border transition-all ${
                 m.status === 'processing' 
-                  ? 'bg-blue-50 border-blue-200 cursor-default' 
+                  ? 'cursor-default' 
                   : m.status === 'error'
-                  ? 'bg-red-50 border-red-200 cursor-not-allowed'
-                  : 'bg-white border-gray-100 cursor-pointer hover:shadow-md active:scale-[0.98]'
+                  ? 'cursor-not-allowed'
+                  : 'cursor-pointer hover:shadow-md active:scale-[0.98]'
               }`}
+              // O style cuida exclusivamente das cores (lendo o tema ou forçando vermelho/azul)
+              style={{
+                backgroundColor: m.status === 'processing' ? '#eff6ff' : (m.status === 'error' ? '#fef2f2' : 'var(--bg-card)'),
+                borderColor: m.status === 'processing' ? '#bfdbfe' : (m.status === 'error' ? '#fecaca' : 'var(--border)'),
+                color: 'var(--text-primary)'
+              }}
             >
               <div className="flex justify-between items-center mb-2">
                 <div className="overflow-hidden pr-4 w-full">
@@ -151,7 +202,7 @@ function BottomNav() {
   const isActive = (path) => location.pathname === path ? "text-blue-600" : "text-gray-400 hover:text-gray-600";
 
   return (
-    <div className="fixed bottom-0 w-full bg-white border-t border-gray-200 pb-safe shadow-[0_-5px_20px_rgba(0,0,0,0.05)] z-40">
+    <div className="fixed bottom-0 w-full border-t pb-safe shadow-[0_-5px_20px_rgba(0,0,0,0.05)] z-40 transition-colors" style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border)' }}>
       <div className="flex justify-around items-center h-16 max-w-md mx-auto">
         <Link to="/history" className={`flex flex-col items-center gap-1 w-20 transition-colors ${isActive('/history')}`}>
           <History size={24} />
@@ -175,7 +226,7 @@ export default function App() {
       {/* O Toaster é o gerenciador de notificações no topo da tela */}
       <Toaster position="top-center" reverseOrder={false} />
       
-      <div className="min-h-screen bg-gray-50 text-gray-900 font-sans selection:bg-blue-200">
+      <div className="min-h-screen font-sans selection:bg-blue-200 transition-colors" style={{ backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)' }}>
         <div className="h-full">
           <Routes>
             <Route path="/" element={<div className="pt-10 flex flex-col items-center justify-center min-h-[80vh]"><AudioRecorder /></div>} />
