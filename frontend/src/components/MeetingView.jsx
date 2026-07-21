@@ -235,6 +235,15 @@ export default function MeetingView() {
                   {msg.role === 'user' && <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-white" style={{ backgroundColor: 'var(--accent)' }}><User size={18} /></div>}
                 </div>
               ))}
+              {/* O FEEDBACK VISUAL RECUPERADO AQUI! */}
+              {isChatting && (
+                <div className="flex gap-3 justify-start animate-pulse">
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: 'var(--bg-primary)' }}><Bot size={18} /></div>
+                  <div className="p-3 rounded-2xl border rounded-tl-none text-sm font-medium" style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }}>
+                    A IA está pensando...
+                  </div>
+                </div>
+              )}
               <div ref={chatEndRef} />
             </div>
             <div className="p-4 border-t flex gap-2" style={{ borderColor: 'var(--border)' }}>
