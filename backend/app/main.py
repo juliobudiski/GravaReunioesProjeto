@@ -1,3 +1,6 @@
+import os
+import firebase_admin
+from firebase_admin import credentials
 from flask import Flask, jsonify
 from flask_cors import CORS
 from backend.app.core.database import Base, engine
@@ -5,25 +8,38 @@ from backend.app.api.routes import api_bp
 
 def create_app():
     app = Flask(__name__)
-    
-    # Habilita CORS para o Frontend React (Vite) conseguir se comunicar
     CORS(app)
 
-    # Garante que as tabelas existem (segurança extra)
+    # 1. Cria as tabelas do PostgreSQL
     Base.metadata.create_all(bind=engine)
 
-    # Registra os nossos endpoints com o prefixo /api
+    # 2. Inicializa o Firebase Admin SDK (O Segurança do Google)
+    try:
+        # Tenta ler do arquivo local primeiro (Para quando você programa no Ubuntu)
+        cred_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "firebase-admin.json")
+        if os.path.exists(cred_path):
+            cred = credentials.Certificate(cred_path)
+            firebase_admin.initialize_app(cred)
+            print("✅ Firebase inicializado via Arquivo Local!")
+        else:
+            # Se não achar o arquivo (está na nuvem), inicializa com as Variáveis de Ambiente do Render
+            firebase_admin.initialize_app()
+            print("✅ Firebase inicializado via Nuvem (Env Vars)!")
+            
+    except ValueError:
+        print("⚡ Firebase já inicializado.")
+    except Exception as e:
+        print(f"❌ ERRO FIREBASE: {e}")
+
+    # 3. Registra as Rotas
     app.register_blueprint(api_bp, url_prefix="/api")
 
-    # Rota básica de teste de saúde do servidor
     @app.route("/health", methods=["GET"])
     def health_check():
-        return jsonify({"status": "Servidor Flask Operacional", "version": "1.0.0"}), 200
+        return jsonify({"status": "Servidor Flask (SaaS) Operacional", "version": "2.0"}), 200
 
     return app
 
 if __name__ == "__main__":
     app = create_app()
-    # Roda o servidor na porta 5000
-    print("🚀 Iniciando Servidor Backend...")
     app.run(host="0.0.0.0", port=5000, debug=True)

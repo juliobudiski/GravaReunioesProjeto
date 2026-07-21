@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Plus, Trash2, Moon, Sun, Palette, Search, Loader2, HelpCircle } from 'lucide-react';
+import { Save, Plus, Trash2, Moon, Sun, Palette, Search, Loader2, HelpCircle, LogOut, User } from 'lucide-react';
 import { getSettings, saveSettings, fetchAvailableModels } from '../api';
 import { useTheme } from '../context/ThemeContext';
 import { toast } from 'react-hot-toast';
+import { logout } from '../firebase';
+import { useNavigate } from 'react-router-dom';
 
 export default function Settings() {
   const { theme, setTheme } = useTheme();
@@ -16,6 +18,22 @@ export default function Settings() {
   useEffect(() => {
     loadSettings();
   }, []);
+  const navigate = useNavigate();
+  const userName = localStorage.getItem('user_name') || 'Usuário';
+  const userPhoto = localStorage.getItem('user_photo');
+  const userEmail = localStorage.getItem('user_email') || '';
+  const [imgError, setImgError] = useState(false);
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+      localStorage.clear(); // Limpa a carteira do usuário
+      toast.success("Você saiu com segurança.");
+      navigate('/login');
+    } catch (error) {
+      toast.error("Erro ao sair.");
+    }
+  };
 
   const loadSettings = async () => {
     try {
@@ -45,14 +63,17 @@ export default function Settings() {
   };
 
   const handleSearchModels = async (index, provider) => {
-    const toastId = toast.loading(`Buscando modelos da ${provider}...`);
+    // Atualizamos o aviso visual
+    const toastId = toast.loading(`Salvando chave e buscando modelos da ${provider}...`);
     try {
+      // CORREÇÃO: Força o salvamento da chave no Banco de Dados ANTES de buscar!
+      await saveSettings({ chunk_duration_minutes: parseInt(chunkDuration), keys });
+
+      // Agora o Python vai encontrar a chave certinha lá no banco
       const data = await fetchAvailableModels(provider);
       
-      // Salva a lista de modelos encontrada dentro daquela chave específica
       const newKeys = [...keys];
       newKeys[index].cascade_list = data.models;
-      // Se não tinha modelo principal, seta o primeiro como padrão
       if (!newKeys[index].primary_model && data.models.length > 0) {
         newKeys[index].primary_model = data.models[0];
       }
@@ -80,6 +101,35 @@ export default function Settings() {
   return (
     // Usa variáveis CSS para adaptar às cores do Tema!
     <div className="p-6 pb-24 max-w-md mx-auto w-full transition-colors" style={{ color: 'var(--text-primary)' }}>
+      {/* 👤 PAINEL: PERFIL DO USUÁRIO */}
+      <div className="p-5 rounded-2xl shadow-sm border mb-6 flex items-center justify-between transition-colors glass-effect" style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border)' }}>
+        <div className="flex items-center gap-4">
+          {/* Lógica segura para renderizar a Foto ou as Iniciais */}
+          {userPhoto && userPhoto !== "null" && !imgError ? (
+            <img 
+              src={userPhoto} 
+              alt="Foto do Perfil" 
+              onError={() => setImgError(true)} 
+              className="w-12 h-12 rounded-full border-2 object-cover" 
+              style={{ borderColor: 'var(--accent)' }} 
+              referrerPolicy="no-referrer" /* Evita bloqueio do Google */
+            />
+          ) : (
+            <div className="w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg" style={{ backgroundColor: 'var(--bg-primary)', color: 'var(--accent)' }}>
+              {userName.charAt(0).toUpperCase()}
+            </div>
+          )}
+          <div>
+            <h3 className="font-bold text-lg leading-tight" style={{ color: 'var(--text-primary)' }}>{userName}</h3>
+            <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>{userEmail}</p>
+            <span className="inline-block mt-1 text-[10px] uppercase font-black px-2 py-0.5 rounded-md" style={{ backgroundColor: 'var(--accent)', color: '#fff' }}>Plano Free</span>
+          </div>
+        </div>
+        
+        <button onClick={handleLogout} className="p-3 rounded-xl transition-all hover:bg-red-50" style={{ color: '#ef4444' }} title="Sair da Conta">
+          <LogOut size={20} />
+        </button>
+      </div>
       <h2 className="text-2xl font-bold mb-6">Ajustes do Synapse</h2>
       
       {/* 🎨 PAINEL: APARÊNCIA */}

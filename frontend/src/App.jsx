@@ -1,11 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Link, useLocation, useNavigate, Navigate } from 'react-router-dom';
 import { Mic, Settings as SettingsIcon, History, ChevronRight, Loader2, Trash2, UploadCloud } from 'lucide-react';
 import { Toaster, toast } from 'react-hot-toast'; // Notificações flutuantes!
 import AudioRecorder from './components/AudioRecorder';
+import Login from './components/Login';
 import Settings from './components/Settings';
 import MeetingView from './components/MeetingView';
 import { getMeetings, deleteMeeting, getOfflineMeetings, syncOfflineMeeting, deleteOfflineMeeting } from './api';
+
+
+// O GUARDA-COSTAS DAS TELAS: Só renderiza se tiver o token do Google salvo
+function ProtectedRoute({ children }) {
+  const token = localStorage.getItem('auth_token');
+  if (!token) return <Navigate to="/login" replace />;
+  return children;
+}
 
 // A TELA DE HISTÓRICO COM ATUALIZAÇÃO EM TEMPO REAL (POLLING)
 function HistoryScreen() {
@@ -223,19 +232,26 @@ function BottomNav() {
 export default function App() {
   return (
     <BrowserRouter>
-      {/* O Toaster é o gerenciador de notificações no topo da tela */}
-      <Toaster position="top-center" reverseOrder={false} />
-      
+      <Toaster position="top-center" />
       <div className="min-h-screen font-sans selection:bg-blue-200 transition-colors" style={{ backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)' }}>
         <div className="h-full">
           <Routes>
-            <Route path="/" element={<div className="pt-10 flex flex-col items-center justify-center min-h-[80vh]"><AudioRecorder /></div>} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="/history" element={<HistoryScreen />} />
-            <Route path="/meeting/:id" element={<MeetingView />} />
+            {/* TELA DE LOGIN ABERTA */}
+            <Route path="/login" element={<Login />} />
+            
+            {/* TELAS PROTEGIDAS */}
+            <Route path="/" element={<ProtectedRoute><div className="pt-10 flex flex-col items-center justify-center min-h-[80vh]"><AudioRecorder /></div></ProtectedRoute>} />
+            <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+            <Route path="/history" element={<ProtectedRoute><HistoryScreen /></ProtectedRoute>} />
+            <Route path="/meeting/:id" element={<ProtectedRoute><MeetingView /></ProtectedRoute>} />
           </Routes>
         </div>
-        <BottomNav />
+        
+        {/* Passa o ProtectedRoute pro Menu também para não vazar */}
+        <Routes>
+          <Route path="/login" element={null} />
+          <Route path="*" element={<ProtectedRoute><BottomNav /></ProtectedRoute>} />
+        </Routes>
       </div>
     </BrowserRouter>
   );

@@ -1,18 +1,31 @@
 import localforage from 'localforage';
+
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+
+// Função utilitária que pega o Token do celular e monta o cabeçalho seguro
+const getHeaders = () => {
+  const token = localStorage.getItem('auth_token');
+  return {
+    "Authorization": `Bearer ${token}`
+  };
+};
 
 export const uploadAudio = async (audioBlob, template) => {
   const formData = new FormData();
   formData.append("audio_file", audioBlob, "gravacao.webm");
   formData.append("template", template);
 
-  const response = await fetch(`${API_URL}/meetings`, { method: "POST", body: formData });
+  const response = await fetch(`${API_URL}/meetings`, { 
+    method: "POST", 
+    headers: getHeaders(), // Injetado! Não enviamos Content-Type aqui para o FormData funcionar
+    body: formData 
+  });
   if (!response.ok) throw new Error("Falha ao enviar o áudio");
   return response.json();
 };
 
 export const getSettings = async () => {
-  const response = await fetch(`${API_URL}/settings`);
+  const response = await fetch(`${API_URL}/settings`, { headers: getHeaders() });
   if (!response.ok) throw new Error("Falha ao carregar configurações");
   return response.json();
 };
@@ -20,7 +33,7 @@ export const getSettings = async () => {
 export const saveSettings = async (settingsData) => {
   const response = await fetch(`${API_URL}/settings`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getHeaders() },
     body: JSON.stringify(settingsData),
   });
   if (!response.ok) throw new Error("Falha ao salvar configurações");
@@ -28,7 +41,7 @@ export const saveSettings = async (settingsData) => {
 };
 
 export const getMeetings = async () => {
-  const response = await fetch(`${API_URL}/meetings`);
+  const response = await fetch(`${API_URL}/meetings`, { headers: getHeaders() });
   if (!response.ok) throw new Error("Falha ao carregar histórico");
   return response.json();
 };
@@ -36,7 +49,7 @@ export const getMeetings = async () => {
 export const updateMeeting = async (id, data) => {
   const response = await fetch(`${API_URL}/meetings/${id}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getHeaders() },
     body: JSON.stringify(data),
   });
   if (!response.ok) throw new Error("Falha ao salvar edição");
@@ -44,7 +57,10 @@ export const updateMeeting = async (id, data) => {
 };
 
 export const deleteMeeting = async (id) => {
-  const response = await fetch(`${API_URL}/meetings/${id}`, { method: "DELETE" });
+  const response = await fetch(`${API_URL}/meetings/${id}`, { 
+    method: "DELETE",
+    headers: getHeaders() 
+  });
   if (!response.ok) throw new Error("Falha ao excluir ata");
   return response.json();
 };
@@ -52,16 +68,15 @@ export const deleteMeeting = async (id) => {
 export const regenerateMeeting = async (id, template) => {
   const response = await fetch(`${API_URL}/meetings/${id}/regenerate`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getHeaders() },
     body: JSON.stringify({ template }),
   });
   if (!response.ok) throw new Error("Falha ao regenerar ata");
   return response.json();
 };
 
-// A FUNÇÃO QUE FALTAVA (US25)
 export const fetchAvailableModels = async (provider) => {
-  const response = await fetch(`${API_URL}/models?provider=${provider}`);
+  const response = await fetch(`${API_URL}/models?provider=${provider}`, { headers: getHeaders() });
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.error || "Falha ao buscar modelos");
@@ -69,11 +84,14 @@ export const fetchAvailableModels = async (provider) => {
   return response.json();
 };
 
-
+// A FUNÇÃO DO CHAT RESTAURADA E PROTEGIDA POR TOKEN
 export const chatWithMeeting = async (id, question) => {
   const response = await fetch(`${API_URL}/meetings/${id}/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { 
+      "Content-Type": "application/json", 
+      ...getHeaders() // Injeta o token aqui também!
+    },
     body: JSON.stringify({ question }),
   });
   if (!response.ok) throw new Error("Falha ao enviar pergunta");
@@ -83,8 +101,8 @@ export const chatWithMeeting = async (id, question) => {
 // ==========================================
 // MÓDULO OFFLINE (IndexedDB)
 // ==========================================
+// O módulo offline não fala com o Flask, então não precisa de getHeaders() aqui
 
-// Salva a gravação localmente se falhar ou não tiver internet
 export const saveOfflineMeeting = async (audioBlob, template, title = "Gravado Offline") => {
   const meetingId = `local_${Date.now()}`;
   const payload = {
@@ -93,19 +111,15 @@ export const saveOfflineMeeting = async (audioBlob, template, title = "Gravado O
     template,
     title,
     created_at: new Date().toISOString(),
-    status: 'pending_sync' // Status que diz "falta enviar"
+    status: 'pending_sync'
   };
-  
-  // Salva no IndexedDB (Suporta arquivos grandes)
   await localforage.setItem(meetingId, payload);
   return meetingId;
 };
 
-// Puxa todas as gravações que estão presas no celular
 export const getOfflineMeetings = async () => {
   const keys = await localforage.keys();
   const offlineMeetings = [];
-  
   for (const key of keys) {
     if (key.startsWith('local_')) {
       const data = await localforage.getItem(key);
@@ -115,15 +129,10 @@ export const getOfflineMeetings = async () => {
   return offlineMeetings.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 };
 
-// Tenta enviar o arquivo preso e, se der certo, deleta do celular!
 export const syncOfflineMeeting = async (id) => {
   const data = await localforage.getItem(id);
   if (!data) throw new Error("Ata não encontrada no celular");
-
-  // Tenta o envio real
-  await uploadAudio(data.audioBlob, data.template);
-  
-  // Limpeza de disco do celular!
+  await uploadAudio(data.audioBlob, data.template); // O uploadAudio já tem o header!
   await localforage.removeItem(id);
   return true;
 };

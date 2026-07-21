@@ -1,48 +1,82 @@
-from flask import Blueprint, request, jsonify
-from backend.app.core.database import SessionLocal
-from backend.app.models.models import Settings, APIKey
+import os
 import json
+from functools import wraps
+from flask import Blueprint, request, jsonify
+from werkzeug.utils import secure_filename
+from firebase_admin import auth
+import google.generativeai as genai
 import openai
 
-# Cria um agrupamento de rotas chamado "api"
+from backend.app.core.database import SessionLocal
+from backend.app.models.models import Settings, APIKey, Meeting, User
+from backend.app.services.meeting_service import MeetingService
+from backend.app.services.llm_orchestrator import LLMOrchestrator
+
 api_bp = Blueprint("api", __name__)
+meeting_service = MeetingService()
+UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.dirname(__file__)), "temp_audio")
+
+# ==========================================
+# MIDDLEWARE DE SEGURANÇA (FIREBASE AUTH)
+# ==========================================
+def require_auth(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            return jsonify({"error": "Acesso Negado: Token não fornecido"}), 401
+        
+        token = auth_header.split(" ")[1]
+        try:
+            # Valida o token com o Firebase
+            decoded_token = auth.verify_id_token(token)
+            request.user_id = decoded_token["uid"]
+            request.user_email = decoded_token.get("email", "")
+            
+            # Checa se o usuário existe no nosso DB, senão cria (First Login)
+            db = SessionLocal()
+            if not db.query(User).filter(User.id == request.user_id).first():
+                new_user = User(id=request.user_id, email=request.user_email)
+                db.add(new_user)
+                db.commit()
+            db.close()
+            
+        except Exception as e:
+            return jsonify({"error": f"Acesso Negado: Token Inválido. {str(e)}"}), 401
+        return f(*args, **kwargs)
+    return decorated_function
+
+# ==========================================
+# ROTAS: CONFIGURAÇÕES E CHAVES
+# ==========================================
 
 @api_bp.route("/settings", methods=["GET"])
+@require_auth
 def get_settings():
     db = SessionLocal()
     try:
-        # Como é Single-User, buscamos sempre o ID 1
         settings = db.query(Settings).filter(Settings.id == 1).first()
+        keys_db = db.query(APIKey).filter(APIKey.user_id == request.user_id).order_by(APIKey.priority).all()
         
-        # Se for o primeiro acesso, retorna valores padrão
-        if not settings:
-            return jsonify({"chunk_duration_minutes": 2, "keys": []}), 200
-        
-        # Monta a lista de chaves
+        chunk = settings.chunk_duration_minutes if settings else 2
         keys = [{
             "provider": k.provider, 
             "key": k.api_key, 
             "priority": k.priority,
             "primary_model": k.primary_model,
             "cascade_list": json.loads(k.cascade_list) if k.cascade_list else []
-        } for k in settings.api_keys]
+        } for k in keys_db]
         
-        return jsonify({
-            "chunk_duration_minutes": settings.chunk_duration_minutes,
-            "keys": keys
-        }), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"chunk_duration_minutes": chunk, "keys": keys}), 200
     finally:
         db.close()
 
 @api_bp.route("/settings", methods=["POST"])
+@require_auth
 def update_settings():
     db = SessionLocal()
     try:
         data = request.json
-        
-        # Busca a configuração ou cria uma nova
         settings = db.query(Settings).filter(Settings.id == 1).first()
         if not settings:
             settings = Settings(id=1, chunk_duration_minutes=data.get("chunk_duration_minutes", 2))
@@ -50,15 +84,13 @@ def update_settings():
         else:
             settings.chunk_duration_minutes = data.get("chunk_duration_minutes", settings.chunk_duration_minutes)
         
-        # US22: Deleta chaves antigas e insere a nova lista (Substituição Completa)
-        db.query(APIKey).filter(APIKey.settings_id == 1).delete()
+        db.query(APIKey).filter(APIKey.user_id == request.user_id).delete()
         
-        raw_keys = data.get("keys", [])
-        for k in raw_keys:
-            # Regra QA: Ignora chaves vazias e espaços em branco
+        for k in data.get("keys", []):
             if k.get("key") and str(k.get("key")).strip() != "":
                 new_key = APIKey(
                     settings_id=1,
+                    user_id=request.user_id,
                     provider=k.get("provider"),
                     api_key=str(k.get("key")).strip(),
                     priority=k.get("priority", 1),
@@ -66,156 +98,26 @@ def update_settings():
                     cascade_list=json.dumps(k.get("cascade_list", []))
                 )
                 db.add(new_key)
-        
-        # Confirma a transação no banco de dados
         db.commit()
-        return jsonify({"message": "Configurações salvas com sucesso!"}), 200
-        
-    except Exception as e:
-        db.rollback() # Se der erro, desfaz tudo para não quebrar o banco
-        return jsonify({"error": str(e)}), 500
-    finally:
-        db.close()
-
-import os
-from werkzeug.utils import secure_filename
-from backend.app.models.models import Meeting
-from backend.app.services.meeting_service import MeetingService
-
-# Instancia o Maestro
-meeting_service = MeetingService()
-
-# Pasta onde salvaremos o áudio original antes de processar
-UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.dirname(__file__)), "temp_audio")
-
-@api_bp.route("/meetings", methods=["POST"])
-def upload_meeting():
-    db = SessionLocal()
-    try:
-        # Pega o arquivo e o template (ex: Padrão, Brainstorming) do Formulário
-        if 'audio_file' not in request.files:
-            return jsonify({"error": "Nenhum arquivo de áudio enviado"}), 400
-            
-        file = request.files['audio_file']
-        template = request.form.get("template", "Padrão (Resumo e Tarefas)")
-        
-        if file.filename == '':
-            return jsonify({"error": "Nome de arquivo vazio"}), 400
-            
-        # Salva o arquivo original com segurança
-        filename = secure_filename(file.filename)
-        file_path = os.path.join(UPLOAD_FOLDER, filename)
-        file.save(file_path)
-        
-        # Cria a reunião no Banco de Dados (Status: processing)
-        new_meeting = Meeting(template_used=template)
-        db.add(new_meeting)
-        db.commit()
-        db.refresh(new_meeting)
-        
-        # Manda processar em Background e libera o celular imediatamente!
-        meeting_service.start_background_processing(new_meeting.id, file_path, template)
-        
-        return jsonify({
-            "message": "Upload concluído. Processamento em andamento.",
-            "meeting_id": new_meeting.id
-        }), 202
-        
+        return jsonify({"message": "Configurações salvas!"}), 200
     except Exception as e:
         db.rollback()
         return jsonify({"error": str(e)}), 500
     finally:
         db.close()
-
-@api_bp.route("/meetings", methods=["GET"])
-def get_all_meetings():
-    db = SessionLocal()
-    try:
-        meetings = db.query(Meeting).order_by(Meeting.created_at.desc()).all()
-        result = []
-        for m in meetings:
-            # Transforma a string do banco de volta numa lista para o Frontend
-            logs_array = []
-            if m.step_logs:
-                try:
-                    logs_array = json.loads(m.step_logs)
-                except:
-                    logs_array = []
-
-            result.append({
-                "id": m.id,
-                "title": m.title,
-                "status": m.status,
-                "created_at": m.created_at.isoformat(),
-                "summary": m.summary,
-                "full_transcript": m.full_transcript,
-                "progress": m.progress,      # NOVO
-                "step_logs": logs_array      # NOVO
-            })
-        return jsonify(result), 200
-    finally:
-        db.close()
-        
-        
-@api_bp.route("/meetings/<meeting_id>", methods=["PUT"])
-def update_meeting(meeting_id):
-    """US05: Atualiza o texto editado pelo usuário."""
-    db = SessionLocal()
-    try:
-        data = request.json
-        meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
-        
-        if not meeting:
-            return jsonify({"error": "Reunião não encontrada"}), 404
-            
-        if "summary" in data:
-            meeting.summary = data["summary"]
-        if "full_transcript" in data:
-            meeting.full_transcript = data["full_transcript"]
-            
-        db.commit()
-        return jsonify({"message": "Ata atualizada com sucesso"}), 200
-    except Exception as e:
-        db.rollback()
-        return jsonify({"error": str(e)}), 500
-    finally:
-        db.close()        
-        
-@api_bp.route("/meetings/<meeting_id>", methods=["DELETE"])
-def delete_meeting(meeting_id):
-    """US21: Exclusão do Histórico."""
-    db = SessionLocal()
-    try:
-        meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
-        if not meeting:
-            return jsonify({"error": "Ata não encontrada"}), 404
-            
-        db.delete(meeting)
-        db.commit()
-        return jsonify({"message": "Ata excluída com sucesso"}), 200
-    except Exception as e:
-        db.rollback()
-        return jsonify({"error": str(e)}), 500
-    finally:
-        db.close()        
-        
-        
-import google.generativeai as genai
-from backend.app.models.models import APIKey
 
 @api_bp.route("/models", methods=["GET"])
+@require_auth
 def get_available_models():
-    """US25: Lista os modelos disponíveis baseado no provedor."""
+    """US25: Lista os modelos, checando a chave DO USUÁRIO LOGADO."""
     provider = request.args.get("provider", "gemini")
     db = SessionLocal()
-    
     try:
-        key_record = db.query(APIKey).filter(APIKey.settings_id == 1, APIKey.provider == provider).first()
+        key_record = db.query(APIKey).filter(APIKey.user_id == request.user_id, APIKey.provider == provider).first()
         if not key_record or not key_record.api_key:
             return jsonify({"error": f"Nenhuma chave cadastrada para {provider}"}), 404
             
         models_list = []
-        
         if provider == "gemini":
             genai.configure(api_key=key_record.api_key)
             for m in genai.list_models():
@@ -223,40 +125,143 @@ def get_available_models():
                     models_list.append(m.name.replace("models/", ""))
                     
         elif provider == "openai":
-            # A correção da OpenAI!
             client = openai.OpenAI(api_key=key_record.api_key)
             response = client.models.list()
-            # Filtra apenas modelos inteligentes (exclui TTS, Whisper, DALL-E)
             for m in response.data:
                 if m.id.startswith("gpt") or m.id.startswith("o1") or m.id.startswith("o3"):
                     models_list.append(m.id)
-            models_list.sort(reverse=True) # Organiza para mostrar os mais novos (gpt-4) em cima
+            models_list.sort(reverse=True)
             
         return jsonify({"models": models_list}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     finally:
         db.close()
-        
-        
-@api_bp.route("/meetings/<meeting_id>/chat", methods=["POST"])
-def chat_meeting(meeting_id):
-    """US19: Chat Contextual (Q&A)"""
+
+# ==========================================
+# ROTAS: GRAVAÇÃO E GERENCIAMENTO DE ATAS
+# ==========================================
+
+@api_bp.route("/meetings", methods=["POST"])
+@require_auth
+def upload_meeting():
     db = SessionLocal()
-    # Importação local para evitar dependência circular (caso não esteja no topo)
-    from backend.app.services.llm_orchestrator import LLMOrchestrator
-    orchestrator = LLMOrchestrator()
+    try:
+        if 'audio_file' not in request.files: 
+            return jsonify({"error": "Nenhum arquivo"}), 400
+        file = request.files['audio_file']
+        template = request.form.get("template", "Padrão")
+        
+        filename = secure_filename(file.filename)
+        file_path = os.path.join(UPLOAD_FOLDER, filename)
+        file.save(file_path)
+        
+        # Cria a reunião vinculada ao USUÁRIO
+        new_meeting = Meeting(user_id=request.user_id, template_used=template)
+        db.add(new_meeting)
+        db.commit()
+        db.refresh(new_meeting)
+        
+        meeting_service.start_background_processing(new_meeting.id, file_path, template, request.user_id)
+        
+        return jsonify({"message": "Upload concluído", "meeting_id": new_meeting.id}), 202
+    finally:
+        db.close()
+
+@api_bp.route("/meetings", methods=["GET"])
+@require_auth
+def get_all_meetings():
+    db = SessionLocal()
+    try:
+        meetings = db.query(Meeting).filter(Meeting.user_id == request.user_id).order_by(Meeting.created_at.desc()).all()
+        result = []
+        for m in meetings:
+            result.append({
+                "id": m.id, "title": m.title, "status": m.status,
+                "created_at": m.created_at.isoformat(), "summary": m.summary,
+                "full_transcript": m.full_transcript, "progress": m.progress,
+                "step_logs": json.loads(m.step_logs) if m.step_logs else []
+            })
+        return jsonify(result), 200
+    finally:
+        db.close()
+
+@api_bp.route("/meetings/<meeting_id>", methods=["PUT", "DELETE"])
+@require_auth
+def manage_meeting(meeting_id):
+    db = SessionLocal()
+    try:
+        meeting = db.query(Meeting).filter(Meeting.id == meeting_id, Meeting.user_id == request.user_id).first()
+        if not meeting: 
+            return jsonify({"error": "Ata não encontrada ou acesso negado"}), 404
+        
+        if request.method == "DELETE":
+            db.delete(meeting)
+            db.commit()
+            return jsonify({"message": "Ata excluída"}), 200
+            
+        elif request.method == "PUT":
+            data = request.json
+            if "summary" in data: meeting.summary = data["summary"]
+            if "full_transcript" in data: meeting.full_transcript = data["full_transcript"]
+            db.commit()
+            return jsonify({"message": "Ata atualizada"}), 200
+    except Exception as e:
+        db.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        db.close()
+
+@api_bp.route("/meetings/<meeting_id>/regenerate", methods=["POST"])
+@require_auth
+def regenerate_meeting(meeting_id):
+    db = SessionLocal()
+    # Orquestrador carrega chaves baseadas no usuário logado
+    orchestrator = LLMOrchestrator(request.user_id) 
+    try:
+        data = request.json
+        new_template = data.get("template", "Padrão")
+        
+        meeting = db.query(Meeting).filter(Meeting.id == meeting_id, Meeting.user_id == request.user_id).first()
+        if not meeting or not meeting.full_transcript:
+            return jsonify({"error": "Ata ou Transcrição não encontrada"}), 404
+            
+        enhanced_template = f"{new_template}. Sugira um Título Curto na primeira linha."
+        summary_dict = orchestrator.generate_summary(meeting.full_transcript, enhanced_template)
+        
+        raw_output = summary_dict.get("raw_output", "")
+        lines = raw_output.split('\n')
+        title = lines[0].replace("Título:", "").replace("*", "").strip() if lines else meeting.title
+        content = "\n".join(lines[1:]).strip()
+
+        meeting.title = title
+        meeting.summary = content
+        meeting.template_used = new_template
+        db.commit()
+        
+        return jsonify({"message": "Ata regenerada com sucesso!", "new_title": title, "new_summary": content}), 200
+    except Exception as e:
+        db.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        db.close()
+
+@api_bp.route("/meetings/<meeting_id>/chat", methods=["POST"])
+@require_auth
+def chat_meeting(meeting_id):
+    db = SessionLocal()
+    orchestrator = LLMOrchestrator(request.user_id)
     try:
         data = request.json
         question = data.get("question")
         
-        meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
+        meeting = db.query(Meeting).filter(Meeting.id == meeting_id, Meeting.user_id == request.user_id).first()
         if not meeting or not meeting.full_transcript:
-            return jsonify({"error": "Transcrição não encontrada para esta ata"}), 404
+            return jsonify({"error": "Transcrição não encontrada"}), 404
             
         answer = orchestrator.chat_with_meeting(meeting.full_transcript, question)
         return jsonify({"answer": answer}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     finally:
-        db.close()        
+        db.close()

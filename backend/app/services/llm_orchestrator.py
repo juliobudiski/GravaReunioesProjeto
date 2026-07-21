@@ -10,32 +10,30 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class LLMOrchestrator:
-    def __init__(self):
+    # AGORA EXIGE O USER_ID
+    def __init__(self, user_id: str):
+        self.user_id = user_id
         self.adapters = self._load_adapters_from_db()
 
     def _load_adapters_from_db(self):
-        """Busca as chaves no banco de dados, ordena por prioridade e cria a lista de Adapters."""
         db = SessionLocal()
         adapters_list = []
         try:
-            # Busca todas as chaves associadas ao id=1, ordenadas por prioridade (1, 2, 3...)
-            keys = db.query(APIKey).filter(APIKey.settings_id == 1).order_by(APIKey.priority.asc()).all()
+            # FILTRA APENAS AS CHAVES DESTE USUÁRIO!
+            keys = db.query(APIKey).filter(APIKey.user_id == self.user_id).order_by(APIKey.priority.asc()).all()
             
             for k in keys:
-                # O parse do JSON extrai a lista do banco
                 cascade = json.loads(k.cascade_list) if k.cascade_list else []
-                
                 if k.provider == 'openai':
                     adapters_list.append({
                         'name': f"OpenAI (Priority {k.priority})", 
-                        'instance': OpenAIAdapter(k.api_key, k.primary_model, cascade) # CORRIGIDO AQUI
+                        'instance': OpenAIAdapter(k.api_key, k.primary_model, cascade)
                     })
                 elif k.provider == 'gemini':
                     adapters_list.append({
                         'name': f"Gemini (Priority {k.priority})", 
                         'instance': GeminiAdapter(k.api_key, k.primary_model, cascade)
                     })
-            
             return adapters_list
         except Exception as e:
             logger.error(f"Erro ao carregar chaves do banco: {e}")

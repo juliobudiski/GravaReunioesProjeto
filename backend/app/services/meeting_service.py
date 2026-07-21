@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 class MeetingService:
     def __init__(self):
         self.audio_service = AudioProcessingService()
-        self.llm_orchestrator = LLMOrchestrator()
 
     def _log_db(self, meeting_id: str, progress: int, msg: str):
         """Salva o progresso e a mensagem no Banco de Dados para o Frontend ler"""
@@ -30,38 +29,37 @@ class MeetingService:
         finally:
             db.close()
 
-    def start_background_processing(self, meeting_id: str, original_file_path: str, template: str):
-        thread = threading.Thread(target=self._process_meeting, args=(meeting_id, original_file_path, template))
+    def start_background_processing(self, meeting_id: str, original_file_path: str, template: str, user_id: str):
+        thread = threading.Thread(target=self._process_meeting, args=(meeting_id, original_file_path, template, user_id))
         thread.start()
 
-    def _process_meeting(self, meeting_id: str, original_file_path: str, template: str):
+    def _process_meeting(self, meeting_id: str, original_file_path: str, template: str, user_id: str):
         db = SessionLocal()
         meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
         chunk_paths = []
         
+        # AQUI NASCE O ORQUESTRADOR! Instanciado exclusivamente com os dados do dono.
+        orchestrator = LLMOrchestrator(user_id)
+        
         try:
-            self._log_db(meeting_id, 10, "Etapa 1: Preparando arquivo e ferramentas...")
+            self._log_db(meeting_id, 10, "Etapa 1: Preparando arquivo...")
             
-            # 1. Fatiamento (Chunks)
-            self._log_db(meeting_id, 25, "Fatiando o áudio para otimização...")
+            # 1. Fatiamento
             chunk_paths = self.audio_service.split_audio(original_file_path)
             
-            # 2. Transcrição (Fallback)
-            self._log_db(meeting_id, 40, f"Transcrevendo {len(chunk_paths)} fatias de áudio...")
+            # 2. Transcrição (usando a variável orchestrator local)
+            self._log_db(meeting_id, 40, f"Transcrevendo fatias...")
             full_transcript_parts = []
-            
             for i, chunk_path in enumerate(chunk_paths):
-                self._log_db(meeting_id, 40 + (i*10), f"Processando fatia {i+1} de {len(chunk_paths)}...")
-                transcript_part = self.llm_orchestrator.transcribe_audio(chunk_path)
+                transcript_part = orchestrator.transcribe_audio(chunk_path)
                 full_transcript_parts.append(transcript_part)
                 
             full_transcript = "\n\n".join(full_transcript_parts)
             
-            # 3. Geração de Ata
-            self._log_db(meeting_id, 80, "Aplicando Inteligência Artificial para gerar Ata...")
-            enhanced_template = f"{template}. Além disso, sugira um Título Curto (max 5 palavras) na primeira linha."
-            
-            summary_dict = self.llm_orchestrator.generate_summary(full_transcript, enhanced_template)
+            # 3. Resumo
+            self._log_db(meeting_id, 80, "Gerando Ata...")
+            enhanced_template = f"{template}. Sugira um Título Curto na primeira linha."
+            summary_dict = orchestrator.generate_summary(full_transcript, enhanced_template)
             raw_output = summary_dict.get("raw_output", "")
             
             lines = raw_output.split('\n')
