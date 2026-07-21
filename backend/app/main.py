@@ -13,18 +13,20 @@ def create_app():
     # 1. Cria as tabelas do PostgreSQL
     Base.metadata.create_all(bind=engine)
 
-    # 2. Inicializa o Firebase Admin SDK (O Segurança do Google)
+    # 2. Inicializa o Firebase Admin SDK
     try:
-        # Tenta ler do arquivo local primeiro (Para quando você programa no Ubuntu)
         cred_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "firebase-admin.json")
         if os.path.exists(cred_path):
             cred = credentials.Certificate(cred_path)
             firebase_admin.initialize_app(cred)
             print("✅ Firebase inicializado via Arquivo Local!")
         else:
-            # Se não achar o arquivo (está na nuvem), inicializa com as Variáveis de Ambiente do Render
-            firebase_admin.initialize_app()
-            print("✅ Firebase inicializado via Nuvem (Env Vars)!")
+            import json
+            # Lê o textão gigante do Render e transforma num dicionário
+            cert_json = json.loads(os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON"))
+            cred = credentials.Certificate(cert_json)
+            firebase_admin.initialize_app(cred)
+            print("✅ Firebase inicializado via Nuvem (JSON Env Var)!")
             
     except ValueError:
         print("⚡ Firebase já inicializado.")
