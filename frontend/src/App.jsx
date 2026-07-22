@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Link, useLocation, useNavigate, Navigate } from 'react-router-dom';
-import { Mic, Settings as SettingsIcon, History, ChevronRight, Loader2, Trash2, UploadCloud } from 'lucide-react';
+import { Mic, Settings as SettingsIcon, History, ChevronRight, Loader2, Trash2, UploadCloud, RefreshCw } from 'lucide-react';
 import { Toaster, toast } from 'react-hot-toast'; // Notificações flutuantes!
 import AudioRecorder from './components/AudioRecorder';
 import Login from './components/Login';
 import Settings from './components/Settings';
 import MeetingView from './components/MeetingView';
-import { getMeetings, deleteMeeting, getOfflineMeetings, syncOfflineMeeting, deleteOfflineMeeting } from './api';
+import { getMeetings, deleteMeeting, getOfflineMeetings, syncOfflineMeeting, deleteOfflineMeeting, retryMeeting } from './api';
 
 
 // O GUARDA-COSTAS DAS TELAS: Só renderiza se tiver o token do Google salvo
@@ -22,6 +22,18 @@ function HistoryScreen() {
   const [offlineMeetings, setOfflineMeetings] = useState([]); // NOVO ESTADO
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
+  
+  const handleRetry = async (e, id) => {
+    e.stopPropagation();
+    const toastId = toast.loading("Reiniciando processamento...");
+    try {
+      await retryMeeting(id);
+      toast.success("Enviado para a fila da IA novamente!", { id: toastId });
+      loadData();
+    } catch (err) {
+      toast.error(err.message, { id: toastId });
+    }
+  };
 
   const loadData = async () => {
     try {
@@ -162,6 +174,13 @@ function HistoryScreen() {
                 
                 {/* Lixeira e Seta Coerentes com o Tema */}
                 <div className="flex gap-2 items-center">
+                  {/* NOVO BOTÃO AQUI */}
+                  {m.status === 'error' && (
+                    <button onClick={(e) => handleRetry(e, m.id)} className="p-2 transition-colors z-10 text-blue-500 hover:text-blue-700" title="Tentar Novamente">
+                      <RefreshCw size={18}/>
+                    </button>
+                  )}
+                  
                   <button onClick={(e) => handleTrash(e, m.id)} className="p-2 transition-colors z-10" style={{ color: '#ef4444' }}>
                     <Trash2 size={18}/>
                   </button>
@@ -169,20 +188,25 @@ function HistoryScreen() {
                 </div>
               </div>
 
-              {/* BARRA DE PROGRESSO E LOGS (Só mostra se não completou e não deu erro) */}
-              {m.status === 'processing' && (
+              {/* BARRA DE PROGRESSO E LOGS (Só mostra se não completou) */}
+              {m.status !== 'completed' && (
                 <div className="mt-4 border-t pt-3" style={{ borderColor: 'var(--border)' }}>
+                  
+                  {/* Progress Bar com cor de Erro */}
                   <div className="w-full rounded-full h-1.5 mb-3 overflow-hidden" style={{ backgroundColor: 'var(--border)' }}>
-                    <div className="h-1.5 rounded-full transition-all duration-500 ease-out" style={{ width: `${m.progress}%`, backgroundColor: 'var(--accent)' }}></div>
+                    <div 
+                      className={`h-1.5 rounded-full transition-all duration-500 ease-out ${m.status === 'error' ? 'bg-red-500' : ''}`} 
+                      style={{ width: `${m.progress}%`, backgroundColor: m.status === 'error' ? '' : 'var(--accent)' }}
+                    ></div>
                   </div>
 
                   <details className="text-sm group">
-                    <summary className="cursor-pointer font-medium flex items-center outline-none list-none" style={{ color: 'var(--accent)' }}>
+                    <summary className="cursor-pointer font-medium flex items-center outline-none list-none" style={{ color: m.status === 'error' ? '#ef4444' : 'var(--accent)' }}>
                       <span className="group-open:hidden">▶ Ver logs do sistema</span>
                       <span className="hidden group-open:inline">▼ Ocultar logs</span>
                     </summary>
-                    {/* Terminalzinho interno (sempre dark style) */}
-                    <div className="mt-2 bg-[#0f172a] text-green-400 p-3 rounded-lg text-[11px] font-mono h-32 overflow-y-auto shadow-inner flex flex-col gap-1">
+                    {/* Terminalzinho interno */}
+                    <div className="mt-2 bg-[#0f172a] p-3 rounded-lg text-[11px] font-mono h-32 overflow-y-auto shadow-inner flex flex-col gap-1" style={{ color: m.status === 'error' ? '#f87171' : '#4ade80' }}>
                       {m.step_logs && m.step_logs.length > 0 ? (
                         m.step_logs.map((log, idx) => (
                           <div key={idx} className="border-b border-gray-800 pb-1">

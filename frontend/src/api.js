@@ -155,3 +155,69 @@ export const syncOfflineMeeting = async (id) => {
 export const deleteOfflineMeeting = async (id) => {
   await localforage.removeItem(id);
 };
+
+// --- NOVAS FUNÇÕES PARA A CAIXA PRETA ---
+
+// Cria a gaveta no disco quando a gravação começa
+export const startLiveBackup = async (meetingId, template) => {
+  await localforage.setItem(`live_${meetingId}`, {
+    id: meetingId,
+    chunks: [], // Vamos jogar o áudio aqui de 1 em 1 segundo
+    template: template,
+    status: 'recording'
+  });
+};
+
+// Empurra um pedaço de áudio para dentro da gaveta
+export const saveLiveChunk = async (meetingId, chunkBlob) => {
+  const data = await localforage.getItem(`live_${meetingId}`);
+  if (data) {
+    data.chunks.push(chunkBlob);
+    await localforage.setItem(`live_${meetingId}`, data);
+  }
+};
+
+// Transforma a gaveta "live" numa reunião "offline" normal quando o usuário para, ou se ele fechar a aba sem querer.
+export const finalizeLiveBackup = async (meetingId) => {
+  const data = await localforage.getItem(`live_${meetingId}`);
+  if (!data || data.chunks.length === 0) {
+    await localforage.removeItem(`live_${meetingId}`);
+    return null;
+  }
+  
+  // Junta todos os pedaços num arquivo só
+  const finalBlob = new Blob(data.chunks, { type: 'audio/webm' });
+  
+  // Promove a gravação para o Cofre Offline
+  await saveOfflineMeeting(finalBlob, data.template, "Gravação Interrompida / Resgatada");
+  await localforage.removeItem(`live_${meetingId}`); // Apaga a gaveta temporária
+  
+  return finalBlob;
+};
+
+// Busca se existe alguma gravação que ficou pelo caminho (Aba fechada)
+export const checkForOrphanBackups = async () => {
+  const keys = await localforage.keys();
+  for (const key of keys) {
+    if (key.startsWith('live_')) {
+      const data = await localforage.getItem(key);
+      if (data && data.status === 'recording') {
+        // Encontramos uma aba que fechou no meio!
+        return key.replace('live_', ''); 
+      }
+    }
+  }
+  return null;
+};
+
+export const retryMeeting = async (id) => {
+  const headers = await getHeaders();
+  const response = await fetch(`${API_URL}/meetings/${id}/retry`, {
+    method: "POST", headers
+  });
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.error || "Falha ao tentar novamente");
+  }
+  return response.json();
+};

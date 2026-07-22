@@ -149,22 +149,28 @@ def upload_meeting():
     try:
         if 'audio_file' not in request.files: 
             return jsonify({"error": "Nenhum arquivo"}), 400
+        
         file = request.files['audio_file']
         template = request.form.get("template", "Padrão")
         
-        filename = secure_filename(file.filename)
-        file_path = os.path.join(UPLOAD_FOLDER, filename)
-        file.save(file_path)
-        
-        # Cria a reunião vinculada ao USUÁRIO
+        # 1. Primeiro cria a reunião no banco para garantir que temos o ID
         new_meeting = Meeting(user_id=request.user_id, template_used=template)
         db.add(new_meeting)
         db.commit()
         db.refresh(new_meeting)
         
+        # 2. Agora usa o ID recém-criado para nomear o arquivo
+        filename = f"{new_meeting.id}.webm"
+        file_path = os.path.join(UPLOAD_FOLDER, filename)
+        file.save(file_path)
+        
+        # 3. Chama o Maestro para trabalhar em background
         meeting_service.start_background_processing(new_meeting.id, file_path, template, request.user_id)
         
         return jsonify({"message": "Upload concluído", "meeting_id": new_meeting.id}), 202
+    except Exception as e:
+        db.rollback()
+        return jsonify({"error": str(e)}), 500
     finally:
         db.close()
 
@@ -265,3 +271,38 @@ def chat_meeting(meeting_id):
         return jsonify({"error": str(e)}), 500
     finally:
         db.close()
+        
+        
+@api_bp.route("/meetings/<meeting_id>/retry", methods=["POST"])
+@require_auth
+def retry_meeting(meeting_id):
+    """US: Tentar Novamente processar um áudio que falhou."""
+    db = SessionLocal()
+    try:
+        meeting = db.query(Meeting).filter(Meeting.id == meeting_id, Meeting.user_id == request.user_id).first()
+        if not meeting or meeting.status != "error":
+            return jsonify({"error": "Reunião não encontrada ou não está em estado de erro."}), 404
+            
+        # Tenta achar o arquivo no disco (assumindo que o nome gerado pelo werkzeug preservou a extensão)
+        # Como o ID não tá no nome do arquivo físico no nosso código atual, precisamos de um truque ou padronizar o nome do arquivo.
+        # Mas para simplificar a vida do Backend atual, vamos buscar na pasta:
+        file_path = os.path.join(UPLOAD_FOLDER, f"{meeting.id}.webm") # DEVEMOS PADRONIZAR O NOME NO UPLOAD!
+        
+        if not os.path.exists(file_path):
+            return jsonify({"error": "O arquivo de áudio original não está mais no servidor. Por favor, faça o upload novamente."}), 404
+
+        # Zera os logs e o status
+        meeting.status = "processing"
+        meeting.progress = 0
+        meeting.step_logs = "[]"
+        db.commit()
+        
+        # Manda pra IA de novo!
+        meeting_service.start_background_processing(meeting.id, file_path, meeting.template_used, request.user_id)
+        
+        return jsonify({"message": "Processamento reiniciado!"}), 202
+    except Exception as e:
+        db.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        db.close()        

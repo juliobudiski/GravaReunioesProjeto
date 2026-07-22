@@ -8,7 +8,6 @@ class OpenAIAdapter(ILLMAdapter):
     def __init__(self, api_key: str, primary_model: str, cascade_list: list):
         self.client = openai.OpenAI(api_key=api_key, timeout=60.0)
         
-        # A CASCATA DA OPENAI
         self.model_cascade = []
         if primary_model:
             self.model_cascade.append(primary_model)
@@ -17,8 +16,20 @@ class OpenAIAdapter(ILLMAdapter):
             if m not in self.model_cascade:
                 self.model_cascade.append(m)
                 
+        # AUTO-PREENCHIMENTO DE CASCATA
         if not self.model_cascade:
-            self.model_cascade = ['gpt-4o-mini', 'gpt-3.5-turbo']
+            logger.info("      -> Cascata vazia. Buscando modelos ativos na OpenAI...")
+            try:
+                response = self.client.models.list()
+                for m in response.data:
+                    if m.id.startswith("gpt") or m.id.startswith("o1") or m.id.startswith("o3"):
+                        self.model_cascade.append(m.id)
+                self.model_cascade.sort(reverse=True)
+                if not self.model_cascade:
+                    self.model_cascade = ['gpt-4o-mini', 'gpt-3.5-turbo']
+            except Exception as e:
+                logger.error(f"Erro ao buscar modelos da OpenAI automaticamente: {e}")
+                self.model_cascade = ['gpt-4o-mini', 'gpt-3.5-turbo']
 
     def _try_models(self, messages):
         last_error = None
@@ -37,7 +48,6 @@ class OpenAIAdapter(ILLMAdapter):
 
     def transcribe(self, audio_file_path: str) -> str:
         try:
-            # O Áudio na OpenAI sempre exige o modelo Whisper
             with open(audio_file_path, "rb") as audio_file:
                 response = self.client.audio.transcriptions.create(
                     model="whisper-1", 
@@ -57,14 +67,13 @@ class OpenAIAdapter(ILLMAdapter):
             return {"raw_output": self._try_models(messages)}
         except Exception as e:
             raise RuntimeError(f"OpenAI LLM Error: {str(e)}")
-            
+
     def chat(self, context: str, question: str) -> str:
         try:
             messages = [
-                {"role": "system", "content": "Você é um assistente útil. Responda à pergunta baseando-se APENAS no contexto fornecido da reunião. Se a resposta não estiver no texto, diga que não foi mencionado."},
+                {"role": "system", "content": "Responda à pergunta APENAS com base no contexto. Se não souber, diga."},
                 {"role": "user", "content": f"Contexto:\n{context}\n\nPergunta: {question}"}
             ]
             return self._try_models(messages)
         except Exception as e:
-            raise RuntimeError(f"OpenAI Chat Error: {str(e)}")        
-            
+            raise RuntimeError(f"OpenAI Chat Error: {str(e)}")

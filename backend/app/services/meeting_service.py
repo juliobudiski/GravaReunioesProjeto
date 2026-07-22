@@ -83,7 +83,14 @@ class MeetingService:
             db.commit()
             
         finally:
-            self._log_db(meeting_id, 100, "Limpando arquivos temporários do servidor...")
-            all_files_to_delete = [original_file_path] + chunk_paths
+            self._log_db(meeting_id, 100, "Finalizando serviço e limpando disco...")
+            
+            # MÁGICA DO RETRY: Só deleta o áudio original se foi SUCESSO!
+            all_files_to_delete = chunk_paths # Sempre deleta as fatias
+            if meeting.status == "completed":
+                all_files_to_delete.append(original_file_path)
+            else:
+                self._log_db(meeting_id, 0, f"Áudio original preservado para tentativa futura.")
+                
             self.audio_service.cleanup_temp_files(all_files_to_delete)
             db.close()

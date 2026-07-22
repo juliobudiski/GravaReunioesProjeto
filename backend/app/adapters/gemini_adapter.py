@@ -7,9 +7,8 @@ logger = logging.getLogger(__name__)
 class GeminiAdapter(ILLMAdapter):
     def __init__(self, api_key: str, primary_model: str, cascade_list: list):
         genai.configure(api_key=api_key)
+        self.api_key = api_key
         
-        # A CASCATA INTELIGENTE DINÂMICA
-        # Pega o modelo que você escolheu na interface, e junta com o resto que a API achou
         self.model_cascade = []
         if primary_model:
             self.model_cascade.append(primary_model)
@@ -18,9 +17,19 @@ class GeminiAdapter(ILLMAdapter):
             if m not in self.model_cascade:
                 self.model_cascade.append(m)
                 
-        # Fallback de emergência caso tudo esteja vazio
+        # O PULO DO GATO: Se a lista estiver vazia (usuário não buscou), o Backend busca sozinho!
         if not self.model_cascade:
-            self.model_cascade = ['gemini-1.5-flash']
+            logger.info("      -> Cascata vazia. Buscando modelos ativos no Google...")
+            try:
+                for m in genai.list_models():
+                    if 'generateContent' in m.supported_generation_methods:
+                        self.model_cascade.append(m.name.replace("models/", ""))
+                # Se até a busca falhar (API offline), usamos o hardcoded à prova de falhas
+                if not self.model_cascade:
+                    self.model_cascade = ['gemini-1.5-flash-latest']
+            except Exception as e:
+                logger.error(f"Erro ao buscar modelos do Gemini automaticamente: {e}")
+                self.model_cascade = ['gemini-1.5-flash-latest']
 
     def _try_models(self, prompt_parts):
         last_error = None
@@ -38,7 +47,7 @@ class GeminiAdapter(ILLMAdapter):
     def transcribe(self, audio_file_path: str) -> str:
         try:
             audio_file = genai.upload_file(path=audio_file_path)
-            return self._try_models(["Por favor, transcreva o áudio a seguir.", audio_file])
+            return self._try_models(["Por favor, transcreva o áudio a seguir exatamente como foi falado.", audio_file])
         except Exception as e:
             raise RuntimeError(f"Gemini Transcribe Error: {str(e)}")
 
@@ -48,11 +57,10 @@ class GeminiAdapter(ILLMAdapter):
             return {"raw_output": self._try_models(prompt)}
         except Exception as e:
             raise RuntimeError(f"Gemini LLM Error: {str(e)}")
-            
+
     def chat(self, context: str, question: str) -> str:
         try:
-            prompt = [f"Responda à pergunta baseando-se APENAS no contexto da reunião fornecida. Se não souber, diga que não foi mencionado.\n\nContexto:\n{context}\n\nPergunta: {question}"]
+            prompt = [f"Responda à pergunta baseando-se APENAS no contexto. Se não souber, diga.\n\nContexto:\n{context}\n\nPergunta: {question}"]
             return self._try_models(prompt)
         except Exception as e:
-            raise RuntimeError(f"Gemini Chat Error: {str(e)}")        
-            
+            raise RuntimeError(f"Gemini Chat Error: {str(e)}")
