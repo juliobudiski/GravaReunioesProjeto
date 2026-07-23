@@ -24,6 +24,7 @@ export default function AudioRecorder() {
   const mediaRecorderRef = useRef(null);
   const wakeLockRef = useRef(null);
   const timerRef = useRef(null);
+  const fileInputRef = useRef(null);
   const unlockIntervalRef = useRef(null);
   const currentMeetingIdRef = useRef(null);
 
@@ -87,6 +88,31 @@ export default function AudioRecorder() {
     await finalizeLiveBackup(orphanFound); // Finaliza para apagar
     setOrphanFound(null);
     toast.success("Áudio interrompido descartado.");
+  };
+  
+  const handleFileUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (navigator.onLine) {
+      setStatusMsg(`⏳ Enviando ${file.name}...`);
+      const toastId = toast.loading("Fazendo upload...");
+      try {
+        await uploadAudio(file, template);
+        toast.success("Enviado com sucesso!", { id: toastId });
+        navigate('/history');
+      } catch (error) {
+        toast.error("Servidor indisponível. Salvando no aparelho...", { id: toastId });
+        await saveOfflineMeeting(file, template, file.name);
+        navigate('/history');
+      }
+    } else {
+      setStatusMsg("📡 Offline: Salvando localmente...");
+      await saveOfflineMeeting(file, template, file.name);
+      toast.success("Arquivo salvo em segurança no aparelho!");
+      navigate('/history');
+    }
+    e.target.value = ""; 
   };
 
   // --- GRAVAÇÃO CAIXA PRETA ---
@@ -222,7 +248,16 @@ export default function AudioRecorder() {
       </div>
 
       <div className="flex items-center justify-center gap-6">
-        <div className="w-14 h-14"></div> {/* Espaçador */}
+        {/* BOTÃO DE UPLOAD DE ARQUIVO */}
+        <input type="file" accept="audio/*" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
+        <button 
+          onClick={() => fileInputRef.current.click()} 
+          className="w-14 h-14 rounded-full flex items-center justify-center transition-transform hover:scale-105 border" 
+          style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }} 
+          title="Fazer Upload de Áudio"
+        >
+          <UploadCloud className="w-6 h-6" />
+        </button>
 
         {!isRecording ? (
           <button onClick={startRecording} className="w-24 h-24 bg-blue-600 hover:bg-blue-700 rounded-full flex items-center justify-center shadow-lg transition-transform hover:scale-105 active:scale-95">

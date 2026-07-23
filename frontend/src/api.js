@@ -221,3 +221,10 @@ export const retryMeeting = async (id) => {
   }
   return response.json();
 };
+
+export const getAdminStats = async () => {
+  const headers = await getHeaders();
+  const response = await fetch(`${API_URL}/admin/stats`, { headers });
+  if (!response.ok) throw new Error("Acesso Negado ou Falha no Servidor");
+  return response.json();
+};

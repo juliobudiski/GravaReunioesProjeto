@@ -7,6 +7,9 @@ from firebase_admin import auth
 import google.generativeai as genai
 import openai
 
+from sqlalchemy import func
+ADMIN_EMAIL = "juliobudiskiherculani@gmail.com"
+
 from backend.app.core.database import SessionLocal
 from backend.app.models.models import Settings, APIKey, Meeting, User
 from backend.app.services.meeting_service import MeetingService
@@ -306,3 +309,48 @@ def retry_meeting(meeting_id):
         return jsonify({"error": str(e)}), 500
     finally:
         db.close()        
+        
+        
+@api_bp.route("/admin/stats", methods=["GET"])
+@require_auth
+def admin_stats():
+    """Painel Avançado do CEO"""
+    if request.user_email != ADMIN_EMAIL:
+        return jsonify({"error": "Acesso Negado: Área Restrita"}), 403
+        
+    db = SessionLocal()
+    try:
+        # 1. Usuários e Planos
+        total_users = db.query(func.count(User.id)).scalar()
+        premium_users = db.query(func.count(User.id)).filter(User.plan_tier == 'premium').scalar()
+        
+        # 2. Permissões de Treinamento de Dados (A nossa "Bina" da LGPD)
+        data_donors = db.query(func.count(User.id)).filter(User.allow_data_training == True).scalar()
+
+        # 3. Engajamento: Atas ATUALMENTE no banco (Sabemos que reduz se deletar)
+        active_meetings = db.query(func.count(Meeting.id)).scalar()
+        
+        # 4. Adoção de IAs (Total de chaves configuradas)
+        total_keys = db.query(func.count(APIKey.id)).scalar()
+        keys_by_provider = db.query(
+            APIKey.provider, func.count(APIKey.id)
+        ).group_by(APIKey.provider).all()
+
+        # 5. Ranking de Foco da IA
+        models_usage = db.query(
+            Meeting.template_used, func.count(Meeting.id)
+        ).group_by(Meeting.template_used).all()
+        
+        return jsonify({
+            "total_users": total_users,
+            "premium_users": premium_users,
+            "data_donors": data_donors,
+            "active_meetings": active_meetings,
+            "total_api_keys": total_keys,
+            "keys_breakdown": [{"provider": p[0], "count": p[1]} for p in keys_by_provider],
+            "templates_ranking": [{"template": m[0], "count": m[1]} for m in models_usage]
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        db.close()

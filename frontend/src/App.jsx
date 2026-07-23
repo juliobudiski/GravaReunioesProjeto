@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Link, useLocation, useNavigate, Navigate } from 'react-router-dom';
-import { Mic, Settings as SettingsIcon, History, ChevronRight, Loader2, Trash2, UploadCloud, RefreshCw } from 'lucide-react';
+import { Mic, Settings as SettingsIcon, History, ChevronRight, Loader2, Trash2, UploadCloud, RefreshCw, Shield } from 'lucide-react';
 import { Toaster, toast } from 'react-hot-toast'; // Notificações flutuantes!
 import AudioRecorder from './components/AudioRecorder';
 import Login from './components/Login';
 import Settings from './components/Settings';
 import MeetingView from './components/MeetingView';
 import { getMeetings, deleteMeeting, getOfflineMeetings, syncOfflineMeeting, deleteOfflineMeeting, retryMeeting } from './api';
-
+import Admin from './components/Admin';
 
 // O GUARDA-COSTAS DAS TELAS: Só renderiza se tiver o token do Google salvo
 function ProtectedRoute({ children }) {
@@ -248,6 +248,13 @@ function BottomNav() {
           <SettingsIcon size={24} />
           <span className="text-[10px] font-semibold tracking-wide">Ajustes</span>
         </Link>
+        {/* BOTÃO SECRETO DO CEO */}
+        {localStorage.getItem('user_email') === 'juliobudiskiherculani@gmail.com' && (
+          <Link to="/admin" className={`flex flex-col items-center gap-1 w-20 transition-colors ${isActive('/admin')}`}>
+            <Shield size={24} className="text-red-500" />
+            <span className="text-[10px] font-bold text-red-500">CEO</span>
+          </Link>
+        )}
       </div>
     </div>
   );
@@ -268,6 +275,7 @@ export default function App() {
             <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
             <Route path="/history" element={<ProtectedRoute><HistoryScreen /></ProtectedRoute>} />
             <Route path="/meeting/:id" element={<ProtectedRoute><MeetingView /></ProtectedRoute>} />
+            <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
           </Routes>
         </div>
         
