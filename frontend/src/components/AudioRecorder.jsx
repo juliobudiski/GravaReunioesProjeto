@@ -20,6 +20,7 @@ export default function AudioRecorder() {
   const [unlockProgress, setUnlockProgress] = useState(0);
   const [template, setTemplate] = useState("Padrão (Resumo e Tarefas)");
   const [orphanFound, setOrphanFound] = useState(null);
+  const [micError, setMicError] = useState(false);
 
   const mediaRecorderRef = useRef(null);
   const wakeLockRef = useRef(null);
@@ -146,7 +147,8 @@ export default function AudioRecorder() {
               navigate('/history');
             } catch (error) {
               toast.error("Erro no envio. Áudio salvo no celular!", { id: toastId });
-              navigate('/history');
+              setMicError(true);
+              toast.error("O acesso ao microfone foi bloqueado.");
             }
           } else {
             toast.success("Modo Offline: Áudio salvo no celular!");
@@ -258,6 +260,21 @@ export default function AudioRecorder() {
         >
           <UploadCloud className="w-6 h-6" />
         </button>
+        {/* CARD DE ERRO DE MICROFONE */}
+      {micError && (
+        <div className="absolute top-[-80px] w-full bg-yellow-50 border border-yellow-200 p-4 rounded-xl shadow-lg flex flex-col items-center animate-bounce-in z-10 text-yellow-800">
+          <p className="text-xs text-center font-bold mb-2">Microfone Bloqueado!</p>
+          <button 
+            onClick={() => {
+              setMicError(false);
+              startRecording(); // Tenta de novo!
+            }} 
+            className="bg-yellow-500 hover:bg-yellow-600 text-white text-xs font-bold py-2 px-4 rounded-lg w-full"
+          >
+            Tentar Novamente
+          </button>
+        </div>
+      )}
 
         {!isRecording ? (
           <button onClick={startRecording} className="w-24 h-24 bg-blue-600 hover:bg-blue-700 rounded-full flex items-center justify-center shadow-lg transition-transform hover:scale-105 active:scale-95">
