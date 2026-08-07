@@ -92,29 +92,33 @@ export default function AudioRecorder() {
   };
   
   const handleFileUpload = async (e) => {
-    // Agora pegamos TODOS os arquivos
+    // CORREÇÃO: Pega a LISTA inteira de arquivos, não apenas o [0]
     const files = e.target.files;
+    
+    // Se o usuário cancelou a janela de seleção
     if (!files || files.length === 0) return;
 
     if (navigator.onLine) {
       setStatusMsg(`⏳ Enviando ${files.length} arquivo(s)...`);
       const toastId = toast.loading(`Fazendo upload de ${files.length} áudio(s)...`);
       try {
-        // Envia a lista inteira
+        // Envia a coleção inteira para a API
         await uploadAudio(files, template);
-        toast.success("Enviado com sucesso!", { id: toastId });
+        toast.success(`${files.length} arquivo(s) enviado(s) com sucesso!`, { id: toastId });
         navigate('/history');
       } catch (error) {
         toast.error("Servidor indisponível. Salvando no aparelho...", { id: toastId });
-        await saveOfflineMeeting(files, template, `${files.length} Arquivo(s)`);
+        await saveOfflineMeeting(files, template, `${files.length} Arquivo(s) Upload`);
         navigate('/history');
       }
     } else {
       setStatusMsg("📡 Offline: Salvando localmente...");
-      await saveOfflineMeeting(files, template, `${files.length} Arquivo(s)`);
+      await saveOfflineMeeting(files, template, `${files.length} Arquivo(s) Upload`);
       toast.success("Arquivos salvos em segurança no aparelho!");
       navigate('/history');
     }
+    
+    // Limpa o input para poder selecionar os mesmos arquivos de novo se precisar
     e.target.value = ""; 
   };
 
