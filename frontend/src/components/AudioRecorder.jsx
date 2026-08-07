@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Mic, Square, Lock, Unlock, UploadCloud, FileAudio, AlertTriangle } from 'lucide-react';
+import { Mic, Square, Lock, Unlock, UploadCloud, AlertTriangle, WifiOff } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
 import { 
@@ -19,16 +19,19 @@ export default function AudioRecorder() {
   const [statusMsg, setStatusMsg] = useState("");
   const [unlockProgress, setUnlockProgress] = useState(0);
   const [template, setTemplate] = useState("Padrão (Resumo e Tarefas)");
+  
+  // Estados de Segurança e UX
   const [orphanFound, setOrphanFound] = useState(null);
   const [micError, setMicError] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
-	
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [isDragging, setIsDragging] = useState(false); // Controle do Arrastar e Soltar
+
   const mediaRecorderRef = useRef(null);
   const wakeLockRef = useRef(null);
   const timerRef = useRef(null);
-  const fileInputRef = useRef(null);
   const unlockIntervalRef = useRef(null);
   const currentMeetingIdRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   const formatTime = (seconds) => {
     const m = Math.floor(seconds / 60).toString().padStart(2, '0');
@@ -37,35 +40,33 @@ export default function AudioRecorder() {
   };
 
   const requestWakeLock = async () => {
-    try {
-      if ('wakeLock' in navigator) wakeLockRef.current = await navigator.wakeLock.request('screen');
-    } catch (err) {}
+    try { if ('wakeLock' in navigator) wakeLockRef.current = await navigator.wakeLock.request('screen'); } catch (err) {}
   };
 
   const releaseWakeLock = () => {
     if (wakeLockRef.current) { wakeLockRef.current.release(); wakeLockRef.current = null; }
   };
-  
-  // REDE DE SEGURANÇA: Previne fechamento acidental da aba/navegador
-  useEffect(() => {
-    const handleBeforeUnload = (e) => {
-      if (isRecording) {
-        // O padrão moderno para forçar a janela de confirmação do navegador
-        e.preventDefault();
-        e.returnValue = ''; // Exigido pelo Chrome
-        return ''; // Exigido por navegadores mais antigos
-      }
-    };
 
+  // --- REDES DE SEGURANÇA (ONLINE & BEFORE UNLOAD) ---
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    const handleBeforeUnload = (e) => {
+      if (isRecording) { e.preventDefault(); e.returnValue = ''; return ''; }
+    };
     window.addEventListener('beforeunload', handleBeforeUnload);
     
-    // Limpa o evento quando o componente for destruído
     return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [isRecording]); // O evento só muda se o status de gravação mudar
+  }, [isRecording]);
 
-  // CHECAGEM DE RESGATE QUANDO ABRE O APLICATIVO
+  // --- RECUPERAÇÃO DE ABA FECHADA (CAIXA PRETA) ---
   useEffect(() => {
     const checkRecovery = async () => {
       const orphanId = await checkForOrphanBackups();
@@ -81,52 +82,24 @@ export default function AudioRecorder() {
       toast.success("Áudio resgatado! Vá no Histórico para enviar.", { id: toastId });
       setOrphanFound(null);
       navigate('/history');
-    } catch (err) {
-      toast.error("Falha ao recuperar.", { id: toastId });
-    }
+    } catch (err) { toast.error("Falha ao recuperar.", { id: toastId }); }
   };
 
   const handleDiscardOrphan = async () => {
-    await finalizeLiveBackup(orphanFound); // Finaliza para apagar
+    await finalizeLiveBackup(orphanFound);
     setOrphanFound(null);
     toast.success("Áudio interrompido descartado.");
   };
-  
-  // --- ZONA DE ARRASTO (DRAG & DROP) ---
-  const handleDragOver = (e) => {
-    e.preventDefault(); // Impede o navegador de tentar tocar o áudio
-    setIsDragging(true);
-  };
 
-  const handleDragLeave = (e) => {
-    e.preventDefault();
-    setIsDragging(false);
-  };
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    setIsDragging(false);
-    
-    // Pega os arquivos que foram soltos na tela
-    const files = e.dataTransfer.files;
-    if (files && files.length > 0) {
-      // Cria um objeto falso para a nossa função handleFileUpload antiga continuar funcionando
-      handleFileUpload({ target: { files: files } });
-    }
-  };
-  
+  // --- UPLOAD MÚLTIPLO E DRAG & DROP ---
   const handleFileUpload = async (e) => {
-    // CORREÇÃO: Pega a LISTA inteira de arquivos, não apenas o [0]
     const files = e.target.files;
-    
-    // Se o usuário cancelou a janela de seleção
     if (!files || files.length === 0) return;
 
-    if (navigator.onLine) {
+    if (isOnline) {
       setStatusMsg(`⏳ Enviando ${files.length} arquivo(s)...`);
       const toastId = toast.loading(`Fazendo upload de ${files.length} áudio(s)...`);
       try {
-        // Envia a coleção inteira para a API
         await uploadAudio(files, template);
         toast.success(`${files.length} arquivo(s) enviado(s) com sucesso!`, { id: toastId });
         navigate('/history');
@@ -141,26 +114,31 @@ export default function AudioRecorder() {
       toast.success("Arquivos salvos em segurança no aparelho!");
       navigate('/history');
     }
-    
-    // Limpa o input para poder selecionar os mesmos arquivos de novo se precisar
-    e.target.value = ""; 
+    if (fileInputRef.current) fileInputRef.current.value = ""; 
   };
 
-  // --- GRAVAÇÃO CAIXA PRETA ---
+  const handleDragOver = (e) => { e.preventDefault(); setIsDragging(true); };
+  const handleDragLeave = (e) => { e.preventDefault(); setIsDragging(false); };
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleFileUpload({ target: { files: e.dataTransfer.files } });
+    }
+  };
+
+  // --- GRAVAÇÃO AO VIVO ---
   const startRecording = async () => {
     try {
+      setMicError(false);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaRecorderRef.current = new MediaRecorder(stream);
       
-      // Gera o ID da reunião que está começando
       currentMeetingIdRef.current = `live_${Date.now()}`;
       await startLiveBackup(currentMeetingIdRef.current, template);
 
-      // O SEGREDO: Salva um pedaço no disco A CADA 1 SEGUNDO (1000ms)
       mediaRecorderRef.current.ondataavailable = async (e) => {
-        if (e.data.size > 0) {
-          await saveLiveChunk(currentMeetingIdRef.current, e.data);
-        }
+        if (e.data.size > 0) await saveLiveChunk(currentMeetingIdRef.current, e.data);
       };
 
       mediaRecorderRef.current.onstop = async () => {
@@ -169,7 +147,7 @@ export default function AudioRecorder() {
         currentMeetingIdRef.current = null;
 
         if (finalBlob) {
-          if (navigator.onLine) {
+          if (isOnline) {
             const toastId = toast.loading("Enviando gravação...");
             try {
               await uploadAudio(finalBlob, template);
@@ -177,18 +155,18 @@ export default function AudioRecorder() {
               navigate('/history');
             } catch (error) {
               toast.error("Erro no envio. Áudio salvo no celular!", { id: toastId });
-              setMicError(true);
-              toast.error("O acesso ao microfone foi bloqueado.");
+              await saveOfflineMeeting(finalBlob, template, "Gravado Localmente");
+              navigate('/history');
             }
           } else {
             toast.success("Modo Offline: Áudio salvo no celular!");
+            await saveOfflineMeeting(finalBlob, template, "Gravado Offline");
             navigate('/history');
           }
         }
       };
 
-      // Começa a gravar fatiando de 1 em 1 segundo
-      mediaRecorderRef.current.start(1000);
+      mediaRecorderRef.current.start(1000); // Salva a cada 1 seg
       setIsRecording(true);
       setIsLocked(true);
       setStatusMsg("Gravando (Backup ao vivo)...");
@@ -197,7 +175,8 @@ export default function AudioRecorder() {
       setRecordingTime(0);
       timerRef.current = setInterval(() => setRecordingTime((prev) => prev + 1), 1000);
     } catch (error) {
-      alert("Permissão de microfone negada!");
+      setMicError(true);
+      toast.error("Permissão de microfone negada!");
     }
   };
 
@@ -212,7 +191,7 @@ export default function AudioRecorder() {
     releaseWakeLock();
   };
 
-  // ... (Lógica de Desbloqueio mantida)
+  // --- DESBLOQUEIO ---
   const handlePointerDown = () => {
     setUnlockProgress(0);
     unlockIntervalRef.current = setInterval(() => {
@@ -226,18 +205,19 @@ export default function AudioRecorder() {
     clearInterval(unlockIntervalRef.current);
     if (unlockProgress < 100) setUnlockProgress(0);
   };
-  useEffect(() => {
-    return () => { clearInterval(timerRef.current); clearInterval(unlockIntervalRef.current); };
-  }, []);
 
-  // --- RENDER DA TELA DE BLOQUEIO ---
+  useEffect(() => { return () => { clearInterval(timerRef.current); clearInterval(unlockIntervalRef.current); }; }, []);
+
+  // ==========================================
+  // RENDERIZAÇÃO
+  // ==========================================
+
   if (isLocked) {
     return (
       <div className="fixed inset-0 bg-gray-900 flex flex-col items-center justify-center z-50 text-white select-none">
         <Lock className="w-12 h-12 text-red-500 mb-4 animate-pulse" />
         <h2 className="text-5xl font-mono font-light mb-2">{formatTime(recordingTime)}</h2>
         <p className="text-gray-400 mb-16 font-medium">Gravando seguro...</p>
-        
         <div className="flex flex-col items-center justify-center">
           <button onPointerDown={handlePointerDown} onPointerUp={handlePointerUp} onPointerLeave={handlePointerUp} className="relative w-32 h-32 rounded-full flex items-center justify-center border-4 border-gray-700 bg-gray-800 outline-none overflow-hidden transition-transform active:scale-95 touch-none">
             <div className="absolute bottom-0 w-full bg-green-500/30 transition-all duration-75" style={{ height: `${unlockProgress}%` }}></div>
@@ -249,35 +229,30 @@ export default function AudioRecorder() {
     );
   }
 
-  // --- RENDER DA TELA NORMAL ---
   return (
     <div 
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      className={`flex flex-col items-center justify-center p-8 rounded-3xl shadow-xl w-full max-w-sm relative transition-all duration-300 ${
-        isDragging 
-          ? 'border-4 border-dashed border-green-500 bg-green-50 scale-105' // Tela fica verde quando arrasta!
-          : 'border border-gray-100'
+      className={`flex flex-col items-center justify-center p-8 rounded-3xl shadow-xl w-full max-w-sm border relative transition-all duration-300 ${
+        isDragging ? 'border-4 border-dashed border-green-500 scale-105' : ''
       }`} 
-      style={!isDragging ? { backgroundColor: 'var(--bg-card)', borderColor: 'var(--border)', color: 'var(--text-primary)' } : {}}
+      style={!isDragging ? { backgroundColor: 'var(--bg-card)', borderColor: 'var(--border)', color: 'var(--text-primary)' } : { backgroundColor: '#f0fdf4', color: '#15803d' }}
     >
       
-      {/* O OVERLAY GIGANTE (Aparece só quando arrasta) */}
+      {/* TELA DE ARRASTO */}
       {isDragging && (
         <div className="absolute inset-0 flex flex-col items-center justify-center z-50 bg-green-50/90 rounded-3xl backdrop-blur-sm text-green-700 font-bold">
           <UploadCloud size={64} className="animate-bounce mb-4" />
-          <h2 className="text-2xl">Solte os áudios aqui!</h2>
+          <h2 className="text-2xl text-center px-4">Solte os áudios aqui!</h2>
         </div>
       )}
 
-      {/* Todo o resto continua igual a partir daqui... */}
+      {/* RECUPERAÇÃO DE CAIXA PRETA */}
       {orphanFound && (
-        <div className="absolute -top-24 left-0 w-full bg-red-50 border border-red-200 p-4 rounded-2xl shadow-lg animate-bounce-in">
-          <div className="flex items-center gap-2 text-red-600 font-bold mb-2">
-            <AlertTriangle size={18} /> Aba Fechada Detectada!
-          </div>
-          <p className="text-xs text-red-700 mb-3">Encontramos uma gravação que foi interrompida antes de salvar.</p>
+        <div className="absolute -top-24 left-0 w-full bg-red-50 border border-red-200 p-4 rounded-2xl shadow-lg animate-bounce-in z-20">
+          <div className="flex items-center gap-2 text-red-600 font-bold mb-2"><AlertTriangle size={18} /> Aba Fechada Detectada!</div>
+          <p className="text-xs text-red-700 mb-3">Encontramos uma gravação interrompida.</p>
           <div className="flex gap-2">
             <button onClick={handleRecover} className="flex-1 bg-red-600 text-white text-xs font-bold py-2 rounded-lg">Resgatar</button>
             <button onClick={handleDiscardOrphan} className="flex-1 bg-red-200 text-red-700 text-xs font-bold py-2 rounded-lg">Descartar</button>
@@ -285,6 +260,17 @@ export default function AudioRecorder() {
         </div>
       )}
 
+      {/* BLOQUEIO DE MICROFONE */}
+      {micError && (
+        <div className="absolute top-[-80px] w-full bg-yellow-50 border border-yellow-200 p-4 rounded-xl shadow-lg flex flex-col items-center animate-bounce-in z-10 text-yellow-800">
+          <p className="text-xs text-center font-bold mb-2">Microfone Bloqueado!</p>
+          <button onClick={() => { setMicError(false); startRecording(); }} className="bg-yellow-500 hover:bg-yellow-600 text-white text-xs font-bold py-2 px-4 rounded-lg w-full">
+            Tentar Novamente
+          </button>
+        </div>
+      )}
+
+      {/* CABEÇALHO */}
       <div className="w-full mb-6">
         <label className="block text-xs font-bold uppercase mb-1" style={{ color: 'var(--text-secondary)' }}>Foco da IA</label>
         <select value={template} onChange={(e) => setTemplate(e.target.value)} className="w-full rounded-lg px-3 py-2 text-sm outline-none border" style={{ backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)', borderColor: 'var(--border)' }}>
@@ -294,55 +280,41 @@ export default function AudioRecorder() {
         </select>
       </div>
 
+      {/* CRONÔMETRO */}
       <div className="text-6xl font-mono mb-8 font-light tracking-tighter">
         {formatTime(recordingTime)}
       </div>
 
-      <div className="flex items-center justify-center gap-6">
-        {/* BOTÃO DE UPLOAD DE ARQUIVO */}
-        <input 
-          type="file" 
-          accept="audio/mp3,audio/wav,audio/webm,audio/ogg,audio/m4a,audio/*" 
-          multiple={true} 
-          className="hidden" 
-          ref={fileInputRef} 
-          onChange={handleFileUpload} 
-        />
-        <button 
-          onClick={() => fileInputRef.current.click()} 
-          className="w-14 h-14 rounded-full flex items-center justify-center transition-transform hover:scale-105 border" 
-          style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }} 
-          title="Fazer Upload de Áudio"
-        >
-          <UploadCloud className="w-6 h-6" />
-        </button>
-        {/* CARD DE ERRO DE MICROFONE */}
-      {micError && (
-        <div className="absolute top-[-80px] w-full bg-yellow-50 border border-yellow-200 p-4 rounded-xl shadow-lg flex flex-col items-center animate-bounce-in z-10 text-yellow-800">
-          <p className="text-xs text-center font-bold mb-2">Microfone Bloqueado!</p>
-          <button 
-            onClick={() => {
-              setMicError(false);
-              startRecording(); // Tenta de novo!
-            }} 
-            className="bg-yellow-500 hover:bg-yellow-600 text-white text-xs font-bold py-2 px-4 rounded-lg w-full"
-          >
-            Tentar Novamente
+      {/* BOTÕES */}
+      <div className="flex items-center justify-center gap-6 w-full">
+        
+        {/* BOTÃO DA NUVEM (MÚLTIPLOS ARQUIVOS) */}
+        <div className="flex-1 flex justify-end">
+          <input type="file" accept="audio/*" multiple={true} className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
+          <button onClick={() => fileInputRef.current.click()} className="w-14 h-14 rounded-full flex items-center justify-center transition-transform hover:scale-105 border z-10" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }} title="Fazer Upload de Áudio">
+            <UploadCloud className="w-6 h-6" />
           </button>
         </div>
-      )}
 
-        {!isRecording ? (
-          <button onClick={startRecording} className="w-24 h-24 bg-blue-600 hover:bg-blue-700 rounded-full flex items-center justify-center shadow-lg transition-transform hover:scale-105 active:scale-95">
-            <Mic className="w-10 h-10 text-white" />
-          </button>
-        ) : (
-          <button onClick={stopRecording} className="w-24 h-24 bg-red-500 hover:bg-red-600 rounded-full flex items-center justify-center shadow-lg animate-pulse">
-            <Square className="w-8 h-8 text-white fill-current" />
-          </button>
-        )}
+        {/* GRAVAR / PARAR */}
+        <div className="flex-none">
+          {!isOnline ? (
+            <div className="flex flex-col items-center p-4 bg-red-50 text-red-600 rounded-2xl animate-pulse">
+              <WifiOff size={32} className="mb-2" />
+              <span className="text-sm font-bold text-center">Sem Internet!</span>
+            </div>
+          ) : !isRecording ? (
+            <button onClick={startRecording} className="w-24 h-24 bg-blue-600 hover:bg-blue-700 rounded-full flex items-center justify-center shadow-[0_0_40px_rgba(37,99,235,0.3)] transition-transform hover:scale-105 active:scale-95 z-10">
+              <Mic className="w-10 h-10 text-white" />
+            </button>
+          ) : (
+            <button onClick={stopRecording} className="w-24 h-24 bg-red-500 hover:bg-red-600 rounded-full flex items-center justify-center shadow-[0_0_40px_rgba(239,68,68,0.4)] animate-pulse z-10">
+              <Square className="w-8 h-8 text-white fill-current" />
+            </button>
+          )}
+        </div>
 
-        <div className="w-14 h-14"></div> {/* Espaçador */}
+        <div className="flex-1"></div> {/* Espaçador */}
       </div>
 
       <div className="mt-8 h-6 text-sm font-medium animate-pulse" style={{ color: 'var(--accent)' }}>
