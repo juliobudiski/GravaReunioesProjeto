@@ -58,7 +58,7 @@ def get_settings():
         settings = db.query(Settings).filter(Settings.id == 1).first()
         keys_db = db.query(APIKey).filter(APIKey.user_id == request.user_id).order_by(APIKey.priority).all()
         
-        chunk = settings.chunk_duration_minutes if settings else 2
+        
         keys = [{
             "provider": k.provider, 
             "key": k.api_key, 
@@ -67,7 +67,7 @@ def get_settings():
             "cascade_list": json.loads(k.cascade_list) if k.cascade_list else []
         } for k in keys_db]
         
-        return jsonify({"chunk_duration_minutes": chunk, "keys": keys}), 200
+        return jsonify({"keys": keys}), 200
     finally:
         db.close()
 
@@ -77,19 +77,15 @@ def update_settings():
     db = SessionLocal()
     try:
         data = request.json
-        settings = db.query(Settings).filter(Settings.id == 1).first()
-        if not settings:
-            settings = Settings(id=1, chunk_duration_minutes=data.get("chunk_duration_minutes", 2))
-            db.add(settings)
-        else:
-            settings.chunk_duration_minutes = data.get("chunk_duration_minutes", settings.chunk_duration_minutes)
         
+        # 1. Apaga todas as chaves antigas DO USUÁRIO LOGADO
         db.query(APIKey).filter(APIKey.user_id == request.user_id).delete()
         
+        # 2. Insere as novas chaves atualizadas
         for k in data.get("keys", []):
             if k.get("key") and str(k.get("key")).strip() != "":
                 new_key = APIKey(
-                    settings_id=1,
+                    settings_id=1, # Mantemos 1 apenas para integridade do banco antigo
                     user_id=request.user_id,
                     provider=k.get("provider"),
                     api_key=str(k.get("key")).strip(),
@@ -98,8 +94,10 @@ def update_settings():
                     cascade_list=json.dumps(k.get("cascade_list", []))
                 )
                 db.add(new_key)
+                
         db.commit()
-        return jsonify({"message": "Configurações salvas!"}), 200
+        return jsonify({"message": "Configurações salvas com sucesso!"}), 200
+        
     except Exception as e:
         db.rollback()
         return jsonify({"error": str(e)}), 500
