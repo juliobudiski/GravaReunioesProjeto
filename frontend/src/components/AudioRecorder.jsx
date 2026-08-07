@@ -66,6 +66,33 @@ export default function AudioRecorder() {
   };
   const handleDiscardOrphan = async () => { await finalizeLiveBackup(orphanFound); setOrphanFound(null); toast.success("Áudio interrompido descartado."); };
 
+  const handleFileUpload = async (e) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    // AQUI ESTAVA O BLOQUEIO 'allAreAudio'. ELE FOI DELETADO. NÓS CONFIAMOS NA SELEÇÃO!
+
+    if (isOnline) {
+      setStatusMsg(`⏳ Enviando ${files.length} arquivo(s)...`);
+      const toastId = toast.loading(`Fazendo upload de ${files.length} áudio(s)...`);
+      try {
+        await uploadAudio(files, template);
+        toast.success(`${files.length} arquivo(s) enviado(s) com sucesso!`, { id: toastId });
+        navigate('/history');
+      } catch (error) {
+        toast.error("Servidor indisponível. Salvando no aparelho...", { id: toastId });
+        await saveOfflineMeeting(files, template, `${files.length} Arquivo(s) Upload`);
+        navigate('/history');
+      }
+    } else {
+      setStatusMsg("📡 Offline: Salvando localmente...");
+      await saveOfflineMeeting(files, template, `${files.length} Arquivo(s) Upload`);
+      toast.success("Arquivos salvos em segurança no aparelho!");
+      navigate('/history');
+    }
+    if (fileInputRef.current) fileInputRef.current.value = ""; 
+  };
+
   // ==========================================
   // LÓGICA DE UPLOAD E ARRASTAR E SOLTAR
   // ==========================================
