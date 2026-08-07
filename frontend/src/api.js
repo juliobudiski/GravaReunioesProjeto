@@ -26,19 +26,24 @@ const getHeaders = async () => {
   });
 };
 
-export const uploadAudio = async (audioBlob, template) => {
+export const uploadAudio = async (audioData, template) => {
   const formData = new FormData();
-  formData.append("audio_file", audioBlob, "gravacao.webm");
+  
+  // Se for uma lista de arquivos (O botão de Upload)
+  if (audioData instanceof FileList || Array.isArray(audioData)) {
+    Array.from(audioData).forEach((file) => {
+      formData.append("audio_file", file);
+    });
+  } else {
+    // Se for um único Blob (O botão de Gravar ao vivo)
+    formData.append("audio_file", audioData, "gravacao.webm");
+  }
+  
   formData.append("template", template);
 
-  const headers = await getHeaders(); // Agora é assíncrono (espera o token)
-  
-  const response = await fetch(`${API_URL}/meetings`, { 
-    method: "POST", 
-    headers: headers, 
-    body: formData 
-  });
-  if (!response.ok) throw new Error("Falha ao enviar o áudio");
+  const headers = await getHeaders();
+  const response = await fetch(`${API_URL}/meetings`, { method: "POST", headers, body: formData });
+  if (!response.ok) throw new Error("Falha ao enviar áudio(s)");
   return response.json();
 };
 

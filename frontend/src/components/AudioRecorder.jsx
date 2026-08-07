@@ -92,25 +92,27 @@ export default function AudioRecorder() {
   };
   
   const handleFileUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+    // Agora pegamos TODOS os arquivos
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
 
     if (navigator.onLine) {
-      setStatusMsg(`⏳ Enviando ${file.name}...`);
-      const toastId = toast.loading("Fazendo upload...");
+      setStatusMsg(`⏳ Enviando ${files.length} arquivo(s)...`);
+      const toastId = toast.loading(`Fazendo upload de ${files.length} áudio(s)...`);
       try {
-        await uploadAudio(file, template);
+        // Envia a lista inteira
+        await uploadAudio(files, template);
         toast.success("Enviado com sucesso!", { id: toastId });
         navigate('/history');
       } catch (error) {
         toast.error("Servidor indisponível. Salvando no aparelho...", { id: toastId });
-        await saveOfflineMeeting(file, template, file.name);
+        await saveOfflineMeeting(files, template, `${files.length} Arquivo(s)`);
         navigate('/history');
       }
     } else {
       setStatusMsg("📡 Offline: Salvando localmente...");
-      await saveOfflineMeeting(file, template, file.name);
-      toast.success("Arquivo salvo em segurança no aparelho!");
+      await saveOfflineMeeting(files, template, `${files.length} Arquivo(s)`);
+      toast.success("Arquivos salvos em segurança no aparelho!");
       navigate('/history');
     }
     e.target.value = ""; 
@@ -251,7 +253,7 @@ export default function AudioRecorder() {
 
       <div className="flex items-center justify-center gap-6">
         {/* BOTÃO DE UPLOAD DE ARQUIVO */}
-        <input type="file" accept="audio/*" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
+        <input type="file" accept="audio/*" multiple className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
         <button 
           onClick={() => fileInputRef.current.click()} 
           className="w-14 h-14 rounded-full flex items-center justify-center transition-transform hover:scale-105 border" 

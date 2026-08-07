@@ -23,24 +23,31 @@ class MeetingService:
         finally:
             db.close()
 
-    def start_background_processing(self, meeting_id: str, original_file_path: str, template: str, user_id: str):
-        thread = threading.Thread(target=self._process_meeting, args=(meeting_id, original_file_path, template, user_id))
+    def start_background_processing(self, meeting_id: str, file_paths: list, template: str, user_id: str):
+        thread = threading.Thread(target=self._process_meeting, args=(meeting_id, file_paths, template, user_id))
         thread.start()
 
-    def _process_meeting(self, meeting_id: str, original_file_path: str, template: str, user_id: str):
+    def _process_meeting(self, meeting_id: str, file_paths: list, template: str, user_id: str):
         db = SessionLocal()
         meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
         orchestrator = LLMOrchestrator(user_id)
         
         try:
-            self._log_db(meeting_id, 20, "Iniciando processamento (Stream to IA)...")
+            self._log_db(meeting_id, 10, f"Iniciando processamento de {len(file_paths)} arquivo(s)...")
             
-            # 1. Transcreve o arquivo INTEIRO de uma vez (Salva Memória RAM)
-            self._log_db(meeting_id, 50, "Enviando arquivo completo para a Inteligência Artificial...")
-            full_transcript = orchestrator.transcribe_audio(original_file_path)
+            full_transcript_parts = []
             
-            # 2. Resumo
-            self._log_db(meeting_id, 80, "Áudio lido! Gerando Ata e Resumo...")
+            # 1. Transcreve cada arquivo da lista
+            for i, path in enumerate(file_paths):
+                self._log_db(meeting_id, 20 + (i*10), f"Transcrevendo arquivo {i+1} de {len(file_paths)}...")
+                txt = orchestrator.transcribe_audio(path)
+                full_transcript_parts.append(txt)
+            
+            # Junta tudo colocando uma divisória bonita no texto
+            full_transcript = "\n\n--- PRÓXIMA PARTE DO ÁUDIO ---\n\n".join(full_transcript_parts)
+            
+            # 2. Resumo (A IA vai ler o textão gigante)
+            self._log_db(meeting_id, 80, "Todos os áudios lidos! Gerando Ata Única...")
             enhanced_template = f"{template}. Sugira um Título Curto na primeira linha."
             summary_dict = orchestrator.generate_summary(full_transcript, enhanced_template)
             
@@ -49,7 +56,6 @@ class MeetingService:
             title = lines[0].replace("Título:", "").replace("*", "").strip() if lines else "Reunião Sem Título"
             content = "\n".join(lines[1:]).strip()
 
-            # 3. Sucesso
             self._log_db(meeting_id, 100, "✅ Finalizado com sucesso!")
             meeting.title = title
             meeting.full_transcript = full_transcript
@@ -66,15 +72,13 @@ class MeetingService:
             db.commit()
             
         finally:
-            self._log_db(meeting_id, 100, "Finalizando serviço e limpando disco...")
-            # MÁGICA DO RETRY: Só deleta o áudio original se foi SUCESSO!
-            if meeting.status == "completed" and os.path.exists(original_file_path):
-                try:
-                    os.remove(original_file_path)
-                    logger.info("🗑️ Arquivo de áudio deletado do disco.")
-                except Exception as del_e:
-                    logger.error(f"Erro ao deletar: {del_e}")
-            elif meeting.status != "completed":
-                self._log_db(meeting_id, 0, "Áudio original preservado para tentativa futura (Retry).")
-                
+            self._log_db(meeting_id, 100, "Limpando disco do servidor...")
+            if meeting.status == "completed":
+                # Deleta TODOS os arquivos da lista
+                for path in file_paths:
+                    if os.path.exists(path):
+                        os.remove(path)
+                logger.info("🗑️ Arquivos originais deletados do disco.")
+            else:
+                self._log_db(meeting_id, 0, "Arquivos originais preservados para o Retry.")
             db.close()
