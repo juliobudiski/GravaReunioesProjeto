@@ -2,7 +2,14 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Mic, Square, Lock, Unlock, UploadCloud, AlertTriangle, WifiOff, X, Send } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
-import { uploadAudio, saveOfflineMeeting, startLiveBackup, saveLiveChunk, finalizeLiveBackup, checkForOrphanBackups } from '../api';
+import { 
+  uploadAudio, 
+  saveOfflineMeeting, 
+  startLiveBackup, 
+  saveLiveChunk, 
+  finalizeLiveBackup, 
+  checkForOrphanBackups 
+} from '../api';
 
 export default function AudioRecorder() {
   const navigate = useNavigate();
@@ -17,14 +24,12 @@ export default function AudioRecorder() {
   const [micError, setMicError] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   
-  // A FILA DE ARQUIVOS
+  // A FILA DE ARQUIVOS (Carrinho)
   const [selectedFiles, setSelectedFiles] = useState([]);
-  const [isDragging, setIsDragging] = useState(false);
 
   const mediaRecorderRef = useRef(null);
   const wakeLockRef = useRef(null);
   const timerRef = useRef(null);
-  const fileInputRef = useRef(null);
   const unlockIntervalRef = useRef(null);
   const currentMeetingIdRef = useRef(null);
 
@@ -37,6 +42,7 @@ export default function AudioRecorder() {
   const requestWakeLock = async () => { try { if ('wakeLock' in navigator) wakeLockRef.current = await navigator.wakeLock.request('screen'); } catch (err) {} };
   const releaseWakeLock = () => { if (wakeLockRef.current) { wakeLockRef.current.release(); wakeLockRef.current = null; } };
 
+  // --- PROTEÇÕES DO SISTEMA ---
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
@@ -66,56 +72,34 @@ export default function AudioRecorder() {
   };
   const handleDiscardOrphan = async () => { await finalizeLiveBackup(orphanFound); setOrphanFound(null); toast.success("Áudio interrompido descartado."); };
 
-  const handleFileUpload = async (e) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    // AQUI ESTAVA O BLOQUEIO 'allAreAudio'. ELE FOI DELETADO. NÓS CONFIAMOS NA SELEÇÃO!
-
-    if (isOnline) {
-      setStatusMsg(`⏳ Enviando ${files.length} arquivo(s)...`);
-      const toastId = toast.loading(`Fazendo upload de ${files.length} áudio(s)...`);
-      try {
-        await uploadAudio(files, template);
-        toast.success(`${files.length} arquivo(s) enviado(s) com sucesso!`, { id: toastId });
-        navigate('/history');
-      } catch (error) {
-        toast.error("Servidor indisponível. Salvando no aparelho...", { id: toastId });
-        await saveOfflineMeeting(files, template, `${files.length} Arquivo(s) Upload`);
-        navigate('/history');
-      }
-    } else {
-      setStatusMsg("📡 Offline: Salvando localmente...");
-      await saveOfflineMeeting(files, template, `${files.length} Arquivo(s) Upload`);
-      toast.success("Arquivos salvos em segurança no aparelho!");
-      navigate('/history');
-    }
-    if (fileInputRef.current) fileInputRef.current.value = ""; 
-  };
-
   // ==========================================
-  // LÓGICA DE UPLOAD E ARRASTAR E SOLTAR
+  // O NOVO SISTEMA DE UPLOAD (SIMPLES E NATIVO)
   // ==========================================
   
-  // Pega os arquivos (do botão ou do arrastar) e bota na FILA (Sem bloquear nada!)
-  const addFilesToQueue = (filesList) => {
-    const files = Array.from(filesList);
-    if (files.length === 0) return;
-    setSelectedFiles(prev => [...prev, ...files]);
-    if (fileInputRef.current) fileInputRef.current.value = ""; 
+  const handleFileSelect = (e) => {
+    // 1. Pega os arquivos que o celular deixou selecionar
+    const files = e.target.files;
+    
+    // 2. Se o usuário cancelou a janela, não faz nada
+    if (!files || files.length === 0) return;
+
+    // 3. Converte para um Array do Javascript
+    const filesArray = Array.from(files);
+    
+    // 4. Feedback Visual Imediato!
+    toast.success(`${filesArray.length} arquivo(s) adicionado(s) à fila!`);
+    
+    // 5. Adiciona os novos arquivos à lista que já está na tela
+    setSelectedFiles(prev => [...prev, ...filesArray]);
+    
+    // 6. Limpa o input para o celular deixar selecionar de novo
+    e.target.value = ""; 
   };
 
-  const handleFileSelect = (e) => addFilesToQueue(e.target.files);
-  const handleDragOver = (e) => { e.preventDefault(); setIsDragging(true); };
-  const handleDragLeave = (e) => { e.preventDefault(); setIsDragging(false); };
-  const handleDrop = (e) => {
-    e.preventDefault();
-    setIsDragging(false);
-    if (e.dataTransfer.files) addFilesToQueue(e.dataTransfer.files);
+  const handleRemoveFile = (index) => {
+    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
   };
-  const handleRemoveFile = (index) => setSelectedFiles(prev => prev.filter((_, i) => i !== index));
 
-  // Botão Verde: ENVIAR FILA PARA O BACKEND
   const handleSendFila = async () => {
     if (selectedFiles.length === 0) return;
 
@@ -124,11 +108,11 @@ export default function AudioRecorder() {
       const toastId = toast.loading(`Fazendo upload de ${selectedFiles.length} áudio(s)...`);
       try {
         await uploadAudio(selectedFiles, template);
-        toast.success(`Arquivos enviados!`, { id: toastId });
+        toast.success(`Arquivos enviados para a IA!`, { id: toastId });
         setSelectedFiles([]);
         navigate('/history');
       } catch (error) {
-        toast.error("Servidor indisponível. Salvando no aparelho...", { id: toastId });
+        toast.error("Erro no servidor. Salvando no aparelho...", { id: toastId });
         await saveOfflineMeeting(selectedFiles, template, `${selectedFiles.length} Arquivos Upload`);
         setSelectedFiles([]);
         navigate('/history');
@@ -136,7 +120,7 @@ export default function AudioRecorder() {
     } else {
       setStatusMsg("📡 Offline: Salvando localmente...");
       await saveOfflineMeeting(selectedFiles, template, `${selectedFiles.length} Arquivos Upload`);
-      toast.success("Salvos no aparelho!");
+      toast.success("Salvos no aparelho com sucesso!");
       setSelectedFiles([]);
       navigate('/history');
     }
@@ -152,7 +136,11 @@ export default function AudioRecorder() {
       mediaRecorderRef.current = new MediaRecorder(stream);
       currentMeetingIdRef.current = `live_${Date.now()}`;
       await startLiveBackup(currentMeetingIdRef.current, template);
-      mediaRecorderRef.current.ondataavailable = async (e) => { if (e.data.size > 0) await saveLiveChunk(currentMeetingIdRef.current, e.data); };
+      
+      mediaRecorderRef.current.ondataavailable = async (e) => { 
+        if (e.data.size > 0) await saveLiveChunk(currentMeetingIdRef.current, e.data); 
+      };
+      
       mediaRecorderRef.current.onstop = async () => {
         setStatusMsg("⏳ Processando...");
         const finalBlob = await finalizeLiveBackup(currentMeetingIdRef.current);
@@ -169,12 +157,16 @@ export default function AudioRecorder() {
           }
         }
       };
+      
       mediaRecorderRef.current.start(1000);
       setIsRecording(true); setIsLocked(true); setStatusMsg("Gravando...");
       await requestWakeLock();
       setRecordingTime(0);
       timerRef.current = setInterval(() => setRecordingTime((prev) => prev + 1), 1000);
-    } catch (error) { setMicError(true); toast.error("Permissão de microfone negada!"); }
+    } catch (error) { 
+      setMicError(true); 
+      toast.error("Permissão de microfone negada!"); 
+    }
   };
 
   const stopRecording = () => {
@@ -211,24 +203,11 @@ export default function AudioRecorder() {
   }
 
   return (
-    <div 
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
-      className={`flex flex-col items-center justify-center p-6 sm:p-8 rounded-3xl shadow-xl w-full max-w-sm border relative transition-all duration-300 ${isDragging ? 'border-4 border-dashed border-green-500 scale-105' : ''}`} 
-      style={!isDragging ? { backgroundColor: 'var(--bg-card)', borderColor: 'var(--border)', color: 'var(--text-primary)' } : { backgroundColor: '#f0fdf4', color: '#15803d' }}
-    >
-      {/* TELA DE ARRASTO (OVERLAY VERDE) */}
-      {isDragging && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center z-50 bg-green-50/90 rounded-3xl backdrop-blur-sm text-green-700 font-bold">
-          <UploadCloud size={64} className="animate-bounce mb-4" />
-          <h2 className="text-2xl text-center px-4">Solte os áudios aqui!</h2>
-        </div>
-      )}
-
+    <div className="flex flex-col items-center justify-center p-6 sm:p-8 rounded-3xl shadow-xl w-full max-w-sm border relative transition-colors" style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}>
+      
       {/* RECUPERAÇÃO DE CAIXA PRETA */}
       {orphanFound && (
-        <div className="absolute -top-24 w-full bg-red-50 border border-red-200 p-4 rounded-2xl shadow-lg animate-bounce-in z-20">
+        <div className="absolute -top-24 w-full bg-red-50 border border-red-200 p-4 rounded-2xl shadow-lg z-20">
           <div className="flex items-center gap-2 text-red-600 font-bold mb-2"><AlertTriangle size={18} /> Aba Fechada!</div>
           <div className="flex gap-2">
             <button onClick={handleRecover} className="flex-1 bg-red-600 text-white py-2 rounded-lg text-xs font-bold">Resgatar</button>
@@ -237,7 +216,7 @@ export default function AudioRecorder() {
         </div>
       )}
 
-      {/* A FILA DE ARQUIVOS (O CARRINHO) */}
+      {/* A FILA DE ARQUIVOS (CARRINHO) */}
       {selectedFiles.length > 0 && (
         <div className="absolute -top-32 w-full border p-4 rounded-2xl shadow-xl z-20 max-h-48 overflow-y-auto" style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--accent)' }}>
           <h3 className="text-xs font-bold uppercase mb-2 flex items-center justify-between" style={{ color: 'var(--accent)' }}>
@@ -270,14 +249,25 @@ export default function AudioRecorder() {
       <div className="text-6xl font-mono mb-8 font-light tracking-tighter">{formatTime(recordingTime)}</div>
 
       <div className="flex items-center justify-center gap-6 w-full">
-        {/* BOTÃO DA NUVEM (SEM RESTRIÇÃO DE TIPO, MÚLTIPLOS ATIVOS) */}
+        
+        {/* BOTÃO DA NUVEM (INFALÍVEL - NATIVO) */}
         <div className="flex-1 flex justify-end">
-          <input type="file" multiple className="hidden" ref={fileInputRef} onChange={handleFileSelect} />
-          <button onClick={() => fileInputRef.current.click()} disabled={isRecording} className="w-14 h-14 rounded-full flex items-center justify-center border disabled:opacity-50" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }}>
+          <label 
+            className="w-14 h-14 rounded-full flex items-center justify-center transition-transform hover:scale-105 border z-10 cursor-pointer shadow-sm" 
+            style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
+            title="Adicionar Áudio à Fila"
+          >
             <UploadCloud className="w-6 h-6" />
-          </button>
+            <input 
+              type="file" 
+              multiple={true} 
+              className="hidden" 
+              onChange={handleFileSelect} 
+            />
+          </label>
         </div>
 
+        {/* GRAVAR / PARAR E ERROS */}
         <div className="flex-none">
           {!isOnline ? (
             <div className="flex flex-col items-center p-4 bg-red-50 text-red-600 rounded-2xl"><WifiOff size={32} /></div>
@@ -294,6 +284,7 @@ export default function AudioRecorder() {
         </div>
         <div className="flex-1"></div>
       </div>
+      
       <div className="mt-8 h-6 text-sm font-medium animate-pulse" style={{ color: 'var(--accent)' }}>{statusMsg}</div>
     </div>
   );
