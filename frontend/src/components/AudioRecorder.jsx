@@ -96,6 +96,14 @@ export default function AudioRecorder() {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
+    // NOVO: Verifica se todos os arquivos são realmente de áudio ou vídeo (webm/mp4)
+    const allAreAudio = Array.from(files).every(file => file.type.includes('audio') || file.type.includes('video'));
+    if (!allAreAudio) {
+      toast.error("Por favor, selecione apenas arquivos de áudio!");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+
     if (isOnline) {
       setStatusMsg(`⏳ Enviando ${files.length} arquivo(s)...`);
       const toastId = toast.loading(`Fazendo upload de ${files.length} áudio(s)...`);
@@ -290,7 +298,7 @@ export default function AudioRecorder() {
         
         {/* BOTÃO DA NUVEM (MÚLTIPLOS ARQUIVOS) */}
         <div className="flex-1 flex justify-end">
-          <input type="file" accept="audio/*" multiple={true} className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
+          <input type="file" multiple={true} className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
           <button onClick={() => fileInputRef.current.click()} className="w-14 h-14 rounded-full flex items-center justify-center transition-transform hover:scale-105 border z-10" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }} title="Fazer Upload de Áudio">
             <UploadCloud className="w-6 h-6" />
           </button>
