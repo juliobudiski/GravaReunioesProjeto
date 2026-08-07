@@ -257,7 +257,14 @@ export default function AudioRecorder() {
 
       <div className="flex items-center justify-center gap-6">
         {/* BOTÃO DE UPLOAD DE ARQUIVO */}
-        <input type="file" accept="audio/*" multiple className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
+        <input 
+          type="file" 
+          accept="audio/mp3,audio/wav,audio/webm,audio/ogg,audio/m4a,audio/*" 
+          multiple={true} 
+          className="hidden" 
+          ref={fileInputRef} 
+          onChange={handleFileUpload} 
+        />
         <button 
           onClick={() => fileInputRef.current.click()} 
           className="w-14 h-14 rounded-full flex items-center justify-center transition-transform hover:scale-105 border" 
