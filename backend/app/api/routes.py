@@ -7,6 +7,9 @@ from firebase_admin import auth
 import google.generativeai as genai
 import openai
 
+from sqlalchemy import func
+ADMIN_EMAIL = "juliobudiskiherculani@gmail.com"
+
 from backend.app.core.database import SessionLocal
 from backend.app.models.models import Settings, APIKey, Meeting, User
 from backend.app.services.meeting_service import MeetingService
@@ -147,22 +150,28 @@ def upload_meeting():
     try:
         if 'audio_file' not in request.files: 
             return jsonify({"error": "Nenhum arquivo"}), 400
+        
         file = request.files['audio_file']
         template = request.form.get("template", "Padrão")
         
-        filename = secure_filename(file.filename)
-        file_path = os.path.join(UPLOAD_FOLDER, filename)
-        file.save(file_path)
-        
-        # Cria a reunião vinculada ao USUÁRIO
+        # 1. Primeiro cria a reunião no banco para garantir que temos o ID
         new_meeting = Meeting(user_id=request.user_id, template_used=template)
         db.add(new_meeting)
         db.commit()
         db.refresh(new_meeting)
         
+        # 2. Agora usa o ID recém-criado para nomear o arquivo
+        filename = f"{new_meeting.id}.webm"
+        file_path = os.path.join(UPLOAD_FOLDER, filename)
+        file.save(file_path)
+        
+        # 3. Chama o Maestro para trabalhar em background
         meeting_service.start_background_processing(new_meeting.id, file_path, template, request.user_id)
         
         return jsonify({"message": "Upload concluído", "meeting_id": new_meeting.id}), 202
+    except Exception as e:
+        db.rollback()
+        return jsonify({"error": str(e)}), 500
     finally:
         db.close()
 
@@ -259,6 +268,86 @@ def chat_meeting(meeting_id):
             
         answer = orchestrator.chat_with_meeting(meeting.full_transcript, question)
         return jsonify({"answer": answer}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        db.close()
+        
+        
+@api_bp.route("/meetings/<meeting_id>/retry", methods=["POST"])
+@require_auth
+def retry_meeting(meeting_id):
+    """US: Tentar Novamente processar um áudio que falhou."""
+    db = SessionLocal()
+    try:
+        meeting = db.query(Meeting).filter(Meeting.id == meeting_id, Meeting.user_id == request.user_id).first()
+        if not meeting or meeting.status != "error":
+            return jsonify({"error": "Reunião não encontrada ou não está em estado de erro."}), 404
+            
+        # Tenta achar o arquivo no disco (assumindo que o nome gerado pelo werkzeug preservou a extensão)
+        # Como o ID não tá no nome do arquivo físico no nosso código atual, precisamos de um truque ou padronizar o nome do arquivo.
+        # Mas para simplificar a vida do Backend atual, vamos buscar na pasta:
+        file_path = os.path.join(UPLOAD_FOLDER, f"{meeting.id}.webm") # DEVEMOS PADRONIZAR O NOME NO UPLOAD!
+        
+        if not os.path.exists(file_path):
+            return jsonify({"error": "O arquivo de áudio original não está mais no servidor. Por favor, faça o upload novamente."}), 404
+
+        # Zera os logs e o status
+        meeting.status = "processing"
+        meeting.progress = 0
+        meeting.step_logs = "[]"
+        db.commit()
+        
+        # Manda pra IA de novo!
+        meeting_service.start_background_processing(meeting.id, file_path, meeting.template_used, request.user_id)
+        
+        return jsonify({"message": "Processamento reiniciado!"}), 202
+    except Exception as e:
+        db.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        db.close()        
+        
+        
+@api_bp.route("/admin/stats", methods=["GET"])
+@require_auth
+def admin_stats():
+    """Painel Avançado do CEO"""
+    if request.user_email != ADMIN_EMAIL:
+        return jsonify({"error": "Acesso Negado: Área Restrita"}), 403
+        
+    db = SessionLocal()
+    try:
+        # 1. Usuários e Planos
+        total_users = db.query(func.count(User.id)).scalar()
+        premium_users = db.query(func.count(User.id)).filter(User.plan_tier == 'premium').scalar()
+        
+        # 2. Permissões de Treinamento de Dados (A nossa "Bina" da LGPD)
+        data_donors = db.query(func.count(User.id)).filter(User.allow_data_training == True).scalar()
+
+        # 3. Engajamento: Atas ATUALMENTE no banco (Sabemos que reduz se deletar)
+        active_meetings = db.query(func.count(Meeting.id)).scalar()
+        
+        # 4. Adoção de IAs (Total de chaves configuradas)
+        total_keys = db.query(func.count(APIKey.id)).scalar()
+        keys_by_provider = db.query(
+            APIKey.provider, func.count(APIKey.id)
+        ).group_by(APIKey.provider).all()
+
+        # 5. Ranking de Foco da IA
+        models_usage = db.query(
+            Meeting.template_used, func.count(Meeting.id)
+        ).group_by(Meeting.template_used).all()
+        
+        return jsonify({
+            "total_users": total_users,
+            "premium_users": premium_users,
+            "data_donors": data_donors,
+            "active_meetings": active_meetings,
+            "total_api_keys": total_keys,
+            "keys_breakdown": [{"provider": p[0], "count": p[1]} for p in keys_by_provider],
+            "templates_ranking": [{"template": m[0], "count": m[1]} for m in models_usage]
+        }), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     finally:

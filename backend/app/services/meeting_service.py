@@ -35,7 +35,7 @@ class MeetingService:
         try:
             self._log_db(meeting_id, 20, "Iniciando processamento (Stream to IA)...")
             
-            # 1. Transcreve o arquivo INTEIRO de uma vez
+            # 1. Transcreve o arquivo INTEIRO de uma vez (Salva Memória RAM)
             self._log_db(meeting_id, 50, "Enviando arquivo completo para a Inteligência Artificial...")
             full_transcript = orchestrator.transcribe_audio(original_file_path)
             
@@ -66,12 +66,15 @@ class MeetingService:
             db.commit()
             
         finally:
-            # LIMPEZA OBRIGATÓRIA DA MEMÓRIA/DISCO
-            self._log_db(meeting_id, 100, "Limpando disco do servidor...")
+            self._log_db(meeting_id, 100, "Finalizando serviço e limpando disco...")
+            # MÁGICA DO RETRY: Só deleta o áudio original se foi SUCESSO!
             if meeting.status == "completed" and os.path.exists(original_file_path):
                 try:
                     os.remove(original_file_path)
                     logger.info("🗑️ Arquivo de áudio deletado do disco.")
                 except Exception as del_e:
                     logger.error(f"Erro ao deletar: {del_e}")
+            elif meeting.status != "completed":
+                self._log_db(meeting_id, 0, "Áudio original preservado para tentativa futura (Retry).")
+                
             db.close()
