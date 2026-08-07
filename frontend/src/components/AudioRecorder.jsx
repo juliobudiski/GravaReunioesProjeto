@@ -21,7 +21,8 @@ export default function AudioRecorder() {
   const [template, setTemplate] = useState("Padrão (Resumo e Tarefas)");
   const [orphanFound, setOrphanFound] = useState(null);
   const [micError, setMicError] = useState(false);
-
+  const [isDragging, setIsDragging] = useState(false);
+	
   const mediaRecorderRef = useRef(null);
   const wakeLockRef = useRef(null);
   const timerRef = useRef(null);
@@ -89,6 +90,29 @@ export default function AudioRecorder() {
     await finalizeLiveBackup(orphanFound); // Finaliza para apagar
     setOrphanFound(null);
     toast.success("Áudio interrompido descartado.");
+  };
+  
+  // --- ZONA DE ARRASTO (DRAG & DROP) ---
+  const handleDragOver = (e) => {
+    e.preventDefault(); // Impede o navegador de tentar tocar o áudio
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+    
+    // Pega os arquivos que foram soltos na tela
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      // Cria um objeto falso para a nossa função handleFileUpload antiga continuar funcionando
+      handleFileUpload({ target: { files: files } });
+    }
   };
   
   const handleFileUpload = async (e) => {
@@ -227,8 +251,27 @@ export default function AudioRecorder() {
 
   // --- RENDER DA TELA NORMAL ---
   return (
-    <div className="flex flex-col items-center justify-center p-8 rounded-3xl shadow-xl w-full max-w-sm border relative transition-colors" style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}>
+    <div 
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className={`flex flex-col items-center justify-center p-8 rounded-3xl shadow-xl w-full max-w-sm relative transition-all duration-300 ${
+        isDragging 
+          ? 'border-4 border-dashed border-green-500 bg-green-50 scale-105' // Tela fica verde quando arrasta!
+          : 'border border-gray-100'
+      }`} 
+      style={!isDragging ? { backgroundColor: 'var(--bg-card)', borderColor: 'var(--border)', color: 'var(--text-primary)' } : {}}
+    >
       
+      {/* O OVERLAY GIGANTE (Aparece só quando arrasta) */}
+      {isDragging && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center z-50 bg-green-50/90 rounded-3xl backdrop-blur-sm text-green-700 font-bold">
+          <UploadCloud size={64} className="animate-bounce mb-4" />
+          <h2 className="text-2xl">Solte os áudios aqui!</h2>
+        </div>
+      )}
+
+      {/* Todo o resto continua igual a partir daqui... */}
       {orphanFound && (
         <div className="absolute -top-24 left-0 w-full bg-red-50 border border-red-200 p-4 rounded-2xl shadow-lg animate-bounce-in">
           <div className="flex items-center gap-2 text-red-600 font-bold mb-2">
