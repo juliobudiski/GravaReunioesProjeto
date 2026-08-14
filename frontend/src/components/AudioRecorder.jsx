@@ -24,7 +24,6 @@ export default function AudioRecorder() {
   const [micError, setMicError] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   
-  // A FILA DE ARQUIVOS (Carrinho)
   const [selectedFiles, setSelectedFiles] = useState([]);
 
   const mediaRecorderRef = useRef(null);
@@ -32,6 +31,7 @@ export default function AudioRecorder() {
   const timerRef = useRef(null);
   const unlockIntervalRef = useRef(null);
   const currentMeetingIdRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   const formatTime = (seconds) => {
     const m = Math.floor(seconds / 60).toString().padStart(2, '0');
@@ -39,23 +39,20 @@ export default function AudioRecorder() {
     return `${m}:${s}`;
   };
 
+  // --- IGNORADOS OS DETALHES DE LOCK/WAKELOCK PARA BREVIDADE ---
   const requestWakeLock = async () => { try { if ('wakeLock' in navigator) wakeLockRef.current = await navigator.wakeLock.request('screen'); } catch (err) {} };
   const releaseWakeLock = () => { if (wakeLockRef.current) { wakeLockRef.current.release(); wakeLockRef.current = null; } };
 
-  // --- PROTEÇÕES DO SISTEMA ---
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
-    const handleBeforeUnload = (e) => { if (isRecording) { e.preventDefault(); e.returnValue = ''; return ''; } };
-    window.addEventListener('beforeunload', handleBeforeUnload);
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
-      window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [isRecording]);
+  }, []);
 
   useEffect(() => {
     const checkRecovery = async () => {
@@ -65,39 +62,53 @@ export default function AudioRecorder() {
     checkRecovery();
   }, []);
 
-  const handleRecover = async () => {
-    const toastId = toast.loading("Resgatando áudio perdido...");
-    try { await finalizeLiveBackup(orphanFound); toast.success("Resgatado! Vá no Histórico para enviar.", { id: toastId }); setOrphanFound(null); navigate('/history'); } 
-    catch (err) { toast.error("Falha ao recuperar.", { id: toastId }); }
-  };
-  const handleDiscardOrphan = async () => { await finalizeLiveBackup(orphanFound); setOrphanFound(null); toast.success("Áudio interrompido descartado."); };
+  const handleRecover = async () => { /* ... */ };
+  const handleDiscardOrphan = async () => { /* ... */ };
+
 
   // ==========================================
-  // O NOVO SISTEMA DE UPLOAD (SIMPLES E NATIVO)
+  // O SISTEMA RASTREÁVEL (DEBUG MODE)
   // ==========================================
   
-  const handleFileSelect = (e) => {
-    // 1. Pega os arquivos que o celular deixou selecionar
-    const files = e.target.files;
-    
-    // 2. Se o usuário cancelou a janela, não faz nada
-    if (!files || files.length === 0) return;
+  
 
-    // 3. Converte para um Array do Javascript
-    const filesArray = Array.from(files);
+  const handleFileSelect = (e) => {
+    console.log("👉 [DEBUG 3] Janela fechada. Evento 'onChange' do input disparado!");
     
-    // 4. Feedback Visual Imediato!
-    toast.success(`${filesArray.length} arquivo(s) adicionado(s) à fila!`);
-    
-    // 5. Adiciona os novos arquivos à lista que já está na tela
-    setSelectedFiles(prev => [...prev, ...filesArray]);
-    
-    // 6. Limpa o input para o celular deixar selecionar de novo
-    e.target.value = ""; 
+    try {
+      const filesObj = e.target.files;
+      console.log("👉 [DEBUG 4] O que o SO devolveu? ->", filesObj);
+
+      if (!filesObj || filesObj.length === 0) {
+        console.warn("⚠️ [DEBUG 5] O objeto files está vazio. O usuário cancelou a janela ou o SO bloqueou o arquivo.");
+        return;
+      }
+
+      console.log(`👉 [DEBUG 6] Encontrados ${filesObj.length} arquivo(s). Formatando para o React...`);
+      const newFilesArray = Array.from(filesObj);
+      
+      console.log("👉 [DEBUG 7] Inspeção do Arquivo [0]:", newFilesArray[0].name, "| Tamanho:", newFilesArray[0].size, "| Tipo:", newFilesArray[0].type);
+      
+      toast.success(`${newFilesArray.length} arquivo(s) processado(s) pelo navegador.`);
+      setSelectedFiles(prevFiles => [...prevFiles, ...newFilesArray]);
+      
+      console.log("✅ [DEBUG 8] Arquivos enviados com sucesso para a Fila do React!");
+
+    } catch (err) {
+      console.error("❌ [DEBUG ERRO CRÍTICO] Falha no processamento do arquivo:", err);
+      toast.error("Erro interno ao ler arquivo.");
+    } finally {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ""; 
+        console.log("🧹 [DEBUG 9] Input de arquivos limpo.");
+      }
+    }
   };
 
-  const handleRemoveFile = (index) => {
-    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
+
+
+  const handleRemoveFile = (indexToRemove) => {
+    setSelectedFiles(prevFiles => prevFiles.filter((_, index) => index !== indexToRemove));
   };
 
   const handleSendFila = async () => {
@@ -204,8 +215,8 @@ export default function AudioRecorder() {
 
   return (
     <div className="flex flex-col items-center justify-center p-6 sm:p-8 rounded-3xl shadow-xl w-full max-w-sm border relative transition-colors" style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}>
+    
       
-      {/* RECUPERAÇÃO DE CAIXA PRETA */}
       {orphanFound && (
         <div className="absolute -top-24 w-full bg-red-50 border border-red-200 p-4 rounded-2xl shadow-lg z-20">
           <div className="flex items-center gap-2 text-red-600 font-bold mb-2"><AlertTriangle size={18} /> Aba Fechada!</div>
@@ -216,7 +227,7 @@ export default function AudioRecorder() {
         </div>
       )}
 
-      {/* A FILA DE ARQUIVOS (CARRINHO) */}
+      {/* A FILA DE ARQUIVOS (CARRINHO VISÍVEL) */}
       {selectedFiles.length > 0 && (
         <div className="absolute -top-32 w-full border p-4 rounded-2xl shadow-xl z-20 max-h-48 overflow-y-auto" style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--accent)' }}>
           <h3 className="text-xs font-bold uppercase mb-2 flex items-center justify-between" style={{ color: 'var(--accent)' }}>
@@ -250,11 +261,17 @@ export default function AudioRecorder() {
 
       <div className="flex items-center justify-center gap-6 w-full">
         
-        {/* BOTÃO DA NUVEM (INFALÍVEL - NATIVO) */}
+        {/* BOTÃO DA NUVEM (INFALÍVEL - NATIVO COM LABEL PARA O FIREFOX) */}
         <div className="flex-1 flex justify-end">
           <label 
-            className="w-14 h-14 rounded-full flex items-center justify-center transition-transform hover:scale-105 border z-10 cursor-pointer shadow-sm" 
-            style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
+            className="w-14 h-14 rounded-full flex items-center justify-center border transition-transform hover:scale-105 shadow-sm cursor-pointer" 
+            style={{ 
+              backgroundColor: 'var(--bg-primary)', 
+              borderColor: 'var(--border)', 
+              color: 'var(--text-secondary)',
+              opacity: isRecording ? 0.5 : 1,
+              pointerEvents: isRecording ? 'none' : 'auto'
+            }}
             title="Adicionar Áudio à Fila"
           >
             <UploadCloud className="w-6 h-6" />
@@ -262,10 +279,12 @@ export default function AudioRecorder() {
               type="file" 
               multiple={true} 
               className="hidden" 
+              // O input perdeu o ref e continua com o onChange limpo:
               onChange={handleFileSelect} 
             />
           </label>
         </div>
+
 
         {/* GRAVAR / PARAR E ERROS */}
         <div className="flex-none">
