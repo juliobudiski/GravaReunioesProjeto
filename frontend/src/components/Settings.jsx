@@ -9,6 +9,8 @@ import { useNavigate } from 'react-router-dom';
 export default function Settings() {
   const { theme, setTheme } = useTheme();
   const [keys, setKeys] = useState([]);
+  const [chunkDuration, setChunkDuration] = useState(2);
+  
   
   const navigate = useNavigate();
   const userName = localStorage.getItem('user_name') || 'Usuário';
@@ -27,6 +29,7 @@ export default function Settings() {
     try {
       const data = await getSettings();
       setKeys(data.keys || []);
+      setChunkDuration(data.chunk_duration_minutes || 2); // <--- ADICIONE ISSO AQUI
     } catch (error) {
       toast.error("Erro ao carregar configurações.");
     }
@@ -82,7 +85,8 @@ export default function Settings() {
   const handleSave = async () => {
     const toastId = toast.loading("Salvando...");
     try {
-      await saveSettings({ keys });
+      // ADICIONE O CHUNK DURATION AQUI DENTRO DO SAVESETTINGS
+      await saveSettings({ keys, chunk_duration_minutes: chunkDuration });
       toast.success("Configurações salvas!", { id: toastId });
     } catch (error) {
       toast.error("Erro ao salvar.", { id: toastId });
@@ -130,6 +134,16 @@ export default function Settings() {
             <Palette size={24} style={{ color: theme === 'colorful' ? 'var(--accent)' : 'var(--text-secondary)' }} />
             <span className="text-xs font-bold">Cyber</span>
           </button>
+        </div>
+      </div>
+      
+      {/* ⏱️ PAINEL: TEMPO DE CORTE DE ÁUDIO */}
+      <div className="p-5 rounded-2xl shadow-sm border mb-6 transition-colors glass-effect" style={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border)' }}>
+        <label className="block text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Tamanho do Corte do Áudio</label>
+        <p className="text-xs mb-4" style={{ color: 'var(--text-secondary)' }}>Define o tamanho em minutos de cada pedaço de áudio enviado para a IA. Evita que o Google rejeite arquivos gigantes.</p>
+        <div className="flex items-center gap-4">
+          <input type="number" min="1" max="120" value={chunkDuration} onChange={(e) => setChunkDuration(e.target.value)} className="w-24 rounded-lg px-3 py-2 text-sm outline-none border" style={{ backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)', borderColor: 'var(--border)' }} />
+          <span className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>minutos por fatia</span>
         </div>
       </div>
 

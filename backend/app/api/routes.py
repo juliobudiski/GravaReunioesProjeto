@@ -7,6 +7,7 @@ from firebase_admin import auth
 import google.generativeai as genai
 import openai
 import glob 
+from backend.app.services.audio_service import AudioProcessingService
 
 from sqlalchemy import func
 ADMIN_EMAIL = "juliobudiskiherculani@gmail.com"
@@ -18,6 +19,7 @@ from backend.app.services.llm_orchestrator import LLMOrchestrator
 
 api_bp = Blueprint("api", __name__)
 meeting_service = MeetingService()
+audio_service = AudioProcessingService()
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.dirname(__file__)), "temp_audio")
 
 # ==========================================
@@ -62,7 +64,6 @@ def get_settings():
         settings = db.query(Settings).filter(Settings.id == 1).first()
         keys_db = db.query(APIKey).filter(APIKey.user_id == request.user_id).order_by(APIKey.priority).all()
         
-        
         keys = [{
             "provider": k.provider, 
             "key": k.api_key, 
@@ -71,7 +72,10 @@ def get_settings():
             "cascade_list": json.loads(k.cascade_list) if k.cascade_list else []
         } for k in keys_db]
         
-        return jsonify({"keys": keys}), 200
+        return jsonify({
+            "chunk_duration_minutes": settings.chunk_duration_minutes if settings else 2,
+            "keys": keys
+        }), 200
     finally:
         db.close()
 
@@ -82,23 +86,20 @@ def update_settings():
     try:
         data = request.json
         
-        # --- CORREÇÃO DO BANCO NOVO AQUI ---
-        # Garante que a configuração principal (ID=1) exista antes de salvar as chaves
         setting = db.query(Settings).filter(Settings.id == 1).first()
         if not setting:
-            setting = Settings(id=1, chunk_duration_minutes=2)
+            setting = Settings(id=1, chunk_duration_minutes=int(data.get("chunk_duration_minutes", 2)))
             db.add(setting)
-            db.commit()
-        # -----------------------------------
-        
-        # 1. Apaga todas as chaves antigas DO USUÁRIO LOGADO
+        else:
+            if "chunk_duration_minutes" in data:
+                setting.chunk_duration_minutes = int(data["chunk_duration_minutes"])
+                
         db.query(APIKey).filter(APIKey.user_id == request.user_id).delete()
         
-        # 2. Insere as novas chaves atualizadas
         for k in data.get("keys", []):
             if k.get("key") and str(k.get("key")).strip() != "":
                 new_key = APIKey(
-                    settings_id=1, # Agora ele não vai dar erro, pois garantimos que o 1 existe!
+                    settings_id=1,
                     user_id=request.user_id,
                     provider=k.get("provider"),
                     api_key=str(k.get("key")).strip(),
@@ -109,8 +110,7 @@ def update_settings():
                 db.add(new_key)
                 
         db.commit()
-        return jsonify({"message": "Configurações salvas com sucesso!"}), 200
-        
+        return jsonify({"message": "Configurações salvas!"}), 200
     except Exception as e:
         db.rollback()
         return jsonify({"error": str(e)}), 500
@@ -158,7 +158,6 @@ def get_available_models():
 def upload_meeting():
     db = SessionLocal()
     try:
-        # Pega a lista de todos os arquivos enviados com a tag 'audio_file'
         files = request.files.getlist('audio_file')
         if not files or files[0].filename == '':
             return jsonify({"error": "Nenhum arquivo"}), 400
@@ -170,18 +169,23 @@ def upload_meeting():
         db.commit()
         db.refresh(new_meeting)
         
-        # Salva todos os arquivos padronizados com part0, part1, part2...
         file_paths = []
         for i, file in enumerate(files):
             filename = f"{new_meeting.id}_part{i}.webm"
             path = os.path.join(UPLOAD_FOLDER, filename)
             file.save(path)
-            file_paths.append(path)
+            
+            # --- O PULO DO GATO: FATIA O ÁUDIO AQUI ---
+            try:
+                chunks = audio_service.split_audio(path)
+                file_paths.extend(chunks)
+            except Exception as e:
+                print(f"Erro ao fatiar: {e}. Enviando arquivo inteiro como backup.")
+                file_paths.append(path)
         
-        # O Maestro agora recebe a LISTA de caminhos
         meeting_service.start_background_processing(new_meeting.id, file_paths, template, request.user_id)
         
-        return jsonify({"message": f"{len(file_paths)} arquivos recebidos!", "meeting_id": new_meeting.id}), 202
+        return jsonify({"message": f"{len(file_paths)} fatias enviadas!", "meeting_id": new_meeting.id}), 202
     except Exception as e:
         db.rollback()
         return jsonify({"error": str(e)}), 500
