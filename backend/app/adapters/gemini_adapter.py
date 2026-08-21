@@ -1,7 +1,6 @@
 import google.generativeai as genai
 import logging
 import time
-from backend.app.adapters.llm_interface import ILLMAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -18,19 +17,9 @@ class GeminiAdapter(ILLMAdapter):
             if m not in self.model_cascade:
                 self.model_cascade.append(m)
                 
-        # O PULO DO GATO: Se a lista estiver vazia (usuário não buscou), o Backend busca sozinho!
         if not self.model_cascade:
-            logger.info("      -> Cascata vazia. Buscando modelos ativos no Google...")
-            try:
-                for m in genai.list_models():
-                    if 'generateContent' in m.supported_generation_methods:
-                        self.model_cascade.append(m.name.replace("models/", ""))
-                # Se até a busca falhar (API offline), usamos o hardcoded à prova de falhas
-                if not self.model_cascade:
-                    self.model_cascade = ['gemini-1.5-flash-latest']
-            except Exception as e:
-                logger.error(f"Erro ao buscar modelos do Gemini automaticamente: {e}")
-                self.model_cascade = ['gemini-1.5-flash-latest']
+            logger.info("      -> Cascata vazia. Usando padrão...")
+            self.model_cascade = ['gemini-1.5-flash-latest']
 
     def _try_models(self, prompt_parts):
         last_error = None
@@ -43,14 +32,15 @@ class GeminiAdapter(ILLMAdapter):
             except Exception as e:
                 logger.warning(f"      -> ⚠️ Falha no sub-modelo {model_name}: {e}")
                 last_error = e
-        raise RuntimeError(f"Todos os modelos da cascata Gemini falharam. Último erro: {last_error}")
+                # FREIO DE MÃO: Pausa 3 segundos para o Google não nos dar banimento (Erro 429)
+                time.sleep(3)
+        raise RuntimeError(f"Todos os modelos da cascata Gemini falharam. Erro: {last_error}")
 
     def transcribe(self, audio_file_path: str) -> str:
         try:
             logger.info("      -> Fazendo upload do áudio para o Google Gemini...")
             audio_file = genai.upload_file(path=audio_file_path)
             
-            # --- CORREÇÃO AQUI: LOOP DE ESPERA ---
             logger.info("      -> Aguardando o Google preparar o áudio internamente...")
             while True:
                 file_info = genai.get_file(audio_file.name)
@@ -59,12 +49,28 @@ class GeminiAdapter(ILLMAdapter):
                     break
                 elif file_info.state.name == 'FAILED':
                     raise RuntimeError("O Google falhou ao processar o arquivo de áudio.")
-                
-                # Pausa de 2 segundos antes de perguntar pro Google de novo
-                time.sleep(2) 
-            # --------------------------------------
+                time.sleep(2)
 
-            return self._try_models(["Por favor, transcreva o áudio a seguir exatamente como foi falado.", audio_file])
+            # FILTRO INTELIGENTE: Só tenta transcrever com modelos que sabemos que suportam áudio
+            audio_models = [m for m in self.model_cascade if 'gemini-1.5' in m or 'gemini-2' in m]
+            if not audio_models:
+                audio_models = ['gemini-1.5-flash'] # Salva-vidas padrão
+            
+            last_error = None
+            for model_name in audio_models:
+                try:
+                    logger.info(f"      -> Tentando ouvir o áudio com: {model_name}")
+                    model = genai.GenerativeModel(model_name)
+                    response = model.generate_content(["Por favor, transcreva o áudio a seguir exatamente como foi falado.", audio_file])
+                    return response.text
+                except Exception as e:
+                    logger.warning(f"      -> ⚠️ Falha no {model_name}: {e}")
+                    last_error = e
+                    # FREIO DE MÃO PARA ÁUDIO
+                    time.sleep(3)
+                    
+            raise RuntimeError(f"Nenhum modelo conseguiu ouvir o áudio. Erro: {last_error}")
+            
         except Exception as e:
             raise RuntimeError(f"Gemini Transcribe Error: {str(e)}")
 
