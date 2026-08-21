@@ -1,5 +1,6 @@
 import google.generativeai as genai
 import logging
+import time
 from backend.app.adapters.llm_interface import ILLMAdapter
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,23 @@ class GeminiAdapter(ILLMAdapter):
 
     def transcribe(self, audio_file_path: str) -> str:
         try:
+            logger.info("      -> Fazendo upload do áudio para o Google Gemini...")
             audio_file = genai.upload_file(path=audio_file_path)
+            
+            # --- CORREÇÃO AQUI: LOOP DE ESPERA ---
+            logger.info("      -> Aguardando o Google preparar o áudio internamente...")
+            while True:
+                file_info = genai.get_file(audio_file.name)
+                if file_info.state.name == 'ACTIVE':
+                    logger.info("      -> Áudio pronto! Iniciando transcrição...")
+                    break
+                elif file_info.state.name == 'FAILED':
+                    raise RuntimeError("O Google falhou ao processar o arquivo de áudio.")
+                
+                # Pausa de 2 segundos antes de perguntar pro Google de novo
+                time.sleep(2) 
+            # --------------------------------------
+
             return self._try_models(["Por favor, transcreva o áudio a seguir exatamente como foi falado.", audio_file])
         except Exception as e:
             raise RuntimeError(f"Gemini Transcribe Error: {str(e)}")
