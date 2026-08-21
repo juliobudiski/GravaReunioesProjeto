@@ -82,6 +82,15 @@ def update_settings():
     try:
         data = request.json
         
+        # --- CORREÇÃO DO BANCO NOVO AQUI ---
+        # Garante que a configuração principal (ID=1) exista antes de salvar as chaves
+        setting = db.query(Settings).filter(Settings.id == 1).first()
+        if not setting:
+            setting = Settings(id=1, chunk_duration_minutes=2)
+            db.add(setting)
+            db.commit()
+        # -----------------------------------
+        
         # 1. Apaga todas as chaves antigas DO USUÁRIO LOGADO
         db.query(APIKey).filter(APIKey.user_id == request.user_id).delete()
         
@@ -89,7 +98,7 @@ def update_settings():
         for k in data.get("keys", []):
             if k.get("key") and str(k.get("key")).strip() != "":
                 new_key = APIKey(
-                    settings_id=1, # Mantemos 1 apenas para integridade do banco antigo
+                    settings_id=1, # Agora ele não vai dar erro, pois garantimos que o 1 existe!
                     user_id=request.user_id,
                     provider=k.get("provider"),
                     api_key=str(k.get("key")).strip(),
