@@ -1,6 +1,7 @@
 import google.generativeai as genai
 import logging
 import time
+from backend.app.adapters.llm_interface import ILLMAdapter
 
 logger = logging.getLogger(__name__)
 
