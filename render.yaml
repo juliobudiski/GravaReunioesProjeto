@@ -5,11 +5,10 @@ services:
     env: python
     plan: free
     buildCommand: "pip install -r backend/requirements.txt"
-    startCommand: "gunicorn --chdir backend/app main:app --bind 0.0.0.0:$PORT"
+    startCommand: "gunicorn --chdir backend/app main:app --bind 0.0.0.0:$PORT --timeout 600"
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0
-      # Não colocamos a DATABASE_URL aqui porque você já colocou manualmente no painel do Render!
 
   # 2. O Frontend (React/PWA)
   - type: web
@@ -18,7 +17,6 @@ services:
     plan: free
     buildCommand: "cd frontend && npm install && npm run build"
     staticPublishPath: "./frontend/dist"
-    # O Render redireciona todas as rotas para o index.html (React Router)
     routes:
       - type: rewrite
         source: /*
