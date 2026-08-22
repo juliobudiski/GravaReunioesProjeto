@@ -5,6 +5,7 @@ import logging
 from backend.app.core.database import SessionLocal
 from backend.app.models.models import Meeting
 from backend.app.services.llm_orchestrator import LLMOrchestrator
+from backend.app.services.audio_service import AudioProcessingService
 
 logger = logging.getLogger(__name__)
 
@@ -31,23 +32,34 @@ class MeetingService:
 
     def _process_meeting(self, meeting_id: str, file_paths: list, template: str, user_id: str):
         orchestrator = LLMOrchestrator(user_id)
+        audio_service = AudioProcessingService()
         status_to_save = "error"
         summary_to_save = ""
         title_to_save = "Reunião Sem Título"
         full_transcript = ""
+        chunk_paths = []
         
         try:
-            self._log_db(meeting_id, 10, f"Iniciando processamento de {len(file_paths)} fatias...")
+            # 1. Avisa na tela que começou a fatiar
+            self._log_db(meeting_id, 5, f"✂️ Iniciando fatiamento inteligente... Isso pode levar 1 minuto.")
             
+            for path in file_paths:
+                chunks = audio_service.split_audio(path)
+                chunk_paths.extend(chunks)
+                
+            self._log_db(meeting_id, 10, f"✅ Fatiamento concluído! O áudio virou {len(chunk_paths)} pedaços leves.")
+            
+            # 2. Transcreve pedaço por pedaço
             full_transcript_parts = []
-            for i, path in enumerate(file_paths):
-                self._log_db(meeting_id, 20 + (i*10), f"Ouvindo fatia {i+1} de {len(file_paths)}...")
-                txt = orchestrator.transcribe_audio(path)
+            for i, chunk_path in enumerate(chunk_paths):
+                self._log_db(meeting_id, 10 + int((i/len(chunk_paths))*70), f"🤖 IA Ouvindo fatia {i+1} de {len(chunk_paths)}...")
+                txt = orchestrator.transcribe_audio(chunk_path)
                 full_transcript_parts.append(txt)
             
             full_transcript = "\n\n--- PRÓXIMA PARTE DO ÁUDIO ---\n\n".join(full_transcript_parts)
             
-            self._log_db(meeting_id, 80, "Todos os áudios lidos! Gerando Ata Única...")
+            # 3. Gera o Resumo Final
+            self._log_db(meeting_id, 80, "🧠 Todos os áudios lidos! Gerando Ata Final...")
             enhanced_template = f"{template}. Sugira um Título Curto na primeira linha."
             summary_dict = orchestrator.generate_summary(full_transcript, enhanced_template)
             
@@ -65,7 +77,6 @@ class MeetingService:
             summary_to_save = error_msg
             
         finally:
-            # SESSÃO RÁPIDA: Atualiza e fecha o banco sem travar a tela
             db = SessionLocal()
             try:
                 meeting = db.query(Meeting).filter(Meeting.id == meeting_id).first()
@@ -83,9 +94,14 @@ class MeetingService:
             finally:
                 db.close()
 
-            self._log_db(meeting_id, 100, "Limpando disco do servidor...")
+            self._log_db(meeting_id, 100, "Limpando HD do servidor...")
             if status_to_save == "completed":
-                for path in file_paths:
+                # Deleta tudo (originais e fatias)
+                for path in file_paths + chunk_paths:
                     if os.path.exists(path):
                         os.remove(path)
-                logger.info("🗑️ Arquivos originais deletados do disco.")
+            else:
+                # Se deu erro, apaga só as fatias pro HD não explodir (guarda o WEBM pro botão Retry funcionar)
+                for path in chunk_paths:
+                    if os.path.exists(path):
+                        os.remove(path)

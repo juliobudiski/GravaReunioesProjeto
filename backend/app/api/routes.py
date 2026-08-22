@@ -174,18 +174,12 @@ def upload_meeting():
             filename = f"{new_meeting.id}_part{i}.webm"
             path = os.path.join(UPLOAD_FOLDER, filename)
             file.save(path)
-            
-            # --- O PULO DO GATO: FATIA O ÁUDIO AQUI ---
-            try:
-                chunks = audio_service.split_audio(path)
-                file_paths.extend(chunks)
-            except Exception as e:
-                print(f"Erro ao fatiar: {e}. Enviando arquivo inteiro como backup.")
-                file_paths.append(path)
+            file_paths.append(path) # Só salva e joga na lista!
         
+        # Manda fatiar e transcrever em Segundo Plano
         meeting_service.start_background_processing(new_meeting.id, file_paths, template, request.user_id)
         
-        return jsonify({"message": f"{len(file_paths)} fatias enviadas!", "meeting_id": new_meeting.id}), 202
+        return jsonify({"message": "Áudio na fila! Processando...", "meeting_id": new_meeting.id}), 202
     except Exception as e:
         db.rollback()
         return jsonify({"error": str(e)}), 500
