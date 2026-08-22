@@ -2,6 +2,7 @@ import os
 import json
 import threading
 import logging
+import time # <--- IMPORTAÇÃO PARA O FREIO DE MÃO
 from backend.app.core.database import SessionLocal
 from backend.app.models.models import Meeting
 from backend.app.services.llm_orchestrator import LLMOrchestrator
@@ -40,28 +41,46 @@ class MeetingService:
         chunk_paths = []
         
         try:
-            # 1. Avisa na tela que começou a fatiar
             self._log_db(meeting_id, 5, f"✂️ Iniciando fatiamento inteligente... Isso pode levar 1 minuto.")
             
             for path in file_paths:
                 chunks = audio_service.split_audio(path)
                 chunk_paths.extend(chunks)
                 
-            self._log_db(meeting_id, 10, f"✅ Fatiamento concluído! O áudio virou {len(chunk_paths)} pedaços leves.")
+            self._log_db(meeting_id, 10, f"✅ Fatiamento concluído! O áudio virou {len(chunk_paths)} pedaços.")
             
-            # 2. Transcreve pedaço por pedaço
             full_transcript_parts = []
             for i, chunk_path in enumerate(chunk_paths):
-                self._log_db(meeting_id, 10 + int((i/len(chunk_paths))*70), f"🤖 IA Ouvindo fatia {i+1} de {len(chunk_paths)}...")
-                txt = orchestrator.transcribe_audio(chunk_path)
-                full_transcript_parts.append(txt)
+                # SISTEMA ANTI-BLOQUEIO DO GOOGLE (Lida com o Limite de 15 pedidos por minuto)
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        self._log_db(meeting_id, 10 + int((i/len(chunk_paths))*70), f"🤖 IA Ouvindo fatia {i+1} de {len(chunk_paths)}...")
+                        txt = orchestrator.transcribe_audio(chunk_path)
+                        full_transcript_parts.append(txt)
+                        break # Se deu certo, sai do loop de tentativas
+                    except Exception as e:
+                        if attempt < max_retries - 1:
+                            self._log_db(meeting_id, 10 + int((i/len(chunk_paths))*70), f"⏳ API ocupada (Anti-Spam). Aguardando 15s para tentar a mesma fatia de novo...")
+                            time.sleep(15)
+                        else:
+                            raise e # Se falhou 3 vezes na mesma fatia, desiste e dá erro crítico
+                
+                # Freio natural: Espera 5 segundos entre cada fatia para não ultrapassar 12 requests por minuto
+                time.sleep(5)
             
             full_transcript = "\n\n--- PRÓXIMA PARTE DO ÁUDIO ---\n\n".join(full_transcript_parts)
             
-            # 3. Gera o Resumo Final
             self._log_db(meeting_id, 80, "🧠 Todos os áudios lidos! Gerando Ata Final...")
             enhanced_template = f"{template}. Sugira um Título Curto na primeira linha."
-            summary_dict = orchestrator.generate_summary(full_transcript, enhanced_template)
+            
+            # Anti-bloqueio para a geração do resumo final
+            try:
+                summary_dict = orchestrator.generate_summary(full_transcript, enhanced_template)
+            except Exception:
+                self._log_db(meeting_id, 85, "⏳ API ocupada. Aguardando 15s para gerar o resumo...")
+                time.sleep(15)
+                summary_dict = orchestrator.generate_summary(full_transcript, enhanced_template)
             
             raw_output = summary_dict.get("raw_output", "")
             lines = raw_output.split('\n')
@@ -96,12 +115,10 @@ class MeetingService:
 
             self._log_db(meeting_id, 100, "Limpando HD do servidor...")
             if status_to_save == "completed":
-                # Deleta tudo (originais e fatias)
                 for path in file_paths + chunk_paths:
                     if os.path.exists(path):
                         os.remove(path)
             else:
-                # Se deu erro, apaga só as fatias pro HD não explodir (guarda o WEBM pro botão Retry funcionar)
                 for path in chunk_paths:
                     if os.path.exists(path):
                         os.remove(path)
